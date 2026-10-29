@@ -1,7 +1,7 @@
 'use strict';
 /* Trackerrr – pití, suplementy a jídlo. Bez frameworku, bez buildu (stejně jako ostatní jendovyapky). */
 
-const VERSION = '2.6';
+const VERSION = '2.7';
 // Klíče v localStorage zůstávají ze staré verze → data v telefonu se neztratí a stará verze by s nimi pořád uměla pracovat.
 const KS = 'trackerrr_state_v10', KC = 'trackerrr_config_v10';
 
@@ -318,23 +318,24 @@ function weekLabel() {
 // Kolik bys měl mít vypito podle času (7:00 → 0 %, 21:00 → 100 %)
 const paceTarget = () => Math.round(goal() * clamp((nowMins() - 420) / (840), 0, 1));
 
-function nextDose(d, k) {
+// dávky, které ještě nejsou vzaté (u každého suplementu ta další), seřazené podle času
+function pendingDoses(d, k) {
   const list = [];
   for (const s of config.customSuplementsList) {
     const n = doses(d, s.id).length;
-    if (n < s.frequency) list.push({ s, i: n, t: s.customTimes[n] });
+    if (n < s.frequency) list.push({ s, i: n, t: s.customTimes[n], late: k === TODAY && toMins(s.customTimes[n]) !== null && toMins(s.customTimes[n]) + 30 < nowMins() });
   }
-  list.sort((a, b) => (toMins(a.t) ?? 9999) - (toMins(b.t) ?? 9999));
-  const it = list[0];
-  if (it && k === TODAY) it.late = toMins(it.t) !== null && toMins(it.t) + 30 < nowMins();
-  return it;
+  return list.sort((a, b) => (toMins(a.t) ?? 9999) - (toMins(b.t) ?? 9999));
 }
+const nextDose = (d, k) => pendingDoses(d, k)[0];
 
 function renderHome() {
   const k = ui.active, d = getDay(k), w = dayWater(d), g = goal();
   const pct = Math.round((w / g) * 100);
   const { cur } = streakInfo();
-  const ss = suppStats(d), nd = nextDose(d, k);
+  const ss = suppStats(d), pend = pendingDoses(d, k);
+  ui.suppPick = clamp(ui.suppPick || 0, 0, Math.max(0, pend.length - 1));
+  const nd = pend[ui.suppPick];
   const fs = foods(d), has = (c) => fs.some((f) => f.category === c);
   const snacks = fs.filter((f) => f.category === 'Svačina').length;
   let pace = '';
@@ -356,9 +357,9 @@ function renderHome() {
   </div>
 
   <div class="orbwrap">
-    <button type="button" class="orb" data-act="tab" data-tab="water" aria-label="Pití: ${pct} %">
+    <button type="button" class="orb" id="orb" aria-label="Kapka – vypito ${pct} %">
       <canvas class="orb__water" id="water" aria-hidden="true"></canvas>
-      <canvas class="orb__eyes" id="eyes" width="96" height="48"></canvas>
+      <canvas class="orb__eyes" id="eyes" width="120" height="60"></canvas>
       <b class="orb__pct" id="orbPct">0%</b>
     </button>
     <p class="orb__sub"><span class="num">${fmtMl(w)}</span> z ${fmtMl(g)}</p>
@@ -368,10 +369,11 @@ function renderHome() {
   <div class="quick">${config.drinks.map((dr) => `<button type="button" class="qd" data-act="drink" data-id="${esc(dr.id)}" aria-label="${esc(dr.name)} ${dr.ml} ml">${ic(dr.icon)}<span>${esc(dr.name)}</span><small class="num">+${dr.ml}</small></button>`).join('')}</div>
 
   <div class="group">
-    <div class="grow grow--supp">
+    <div class="grow grow--supp" id="suppRow">
       <button type="button" class="grow__main" data-act="tab" data-tab="supps">
         <span class="gi">${ic('pill')}</span>
-        <span class="grow__t"><b>Suplementy</b><small class="${nd?.late ? 'warn' : ''}">${nd ? `${esc(nd.s.name)} · ${esc(nd.t)}` : ss.target ? 'Všechno vzato' : 'Zatím žádné'}</small></span>
+        <span class="grow__t"><b>Suplementy</b><small class="${nd?.late ? 'warn' : ''}${ui.suppDir ? ` slide${ui.suppDir > 0 ? 'R' : 'L'}` : ''}">${nd ? `${esc(nd.s.name)} · ${esc(nd.t)}` : ss.target ? 'Všechno vzato' : 'Zatím žádné'}</small>
+          ${pend.length > 1 ? `<span class="pick" aria-hidden="true">${pend.map((_, i) => `<i class="${i === ui.suppPick ? 'on' : ''}"></i>`).join('')}</span>` : ''}</span>
         <span class="frac num">${ss.done}<i>/${ss.target}</i></span>
       </button>
       ${nd ? `<button type="button" class="take" data-act="dose" data-id="${esc(nd.s.id)}" data-i="${nd.i}">Vzít</button>` : ''}
@@ -383,6 +385,15 @@ function renderHome() {
     </button>
   </div>`;
   swipe($('#weekCard'), (dir) => moveWeek(dir));
+  // švihnutím do strany vybíráš, kterou dávku vezmeš
+  swipe($('#suppRow'), (dir) => {
+    if (pend.length < 2) return;
+    ui.suppPick = (ui.suppPick + dir + pend.length) % pend.length; ui.suppDir = dir; haptic(); render(); ui.suppDir = 0;
+  });
+  const orb = $('#orb');
+  fitOrb();
+  orb.addEventListener('click', pokeOrb);
+  orb.addEventListener('pointermove', stirOrb, { passive: true });
   setOrb(pct);
 }
 function setOrb(pct) {
@@ -391,7 +402,7 @@ function setOrb(pct) {
   W.target = level / 100;
   const from = ui.shownPct ?? 0;
   ui.shownPct = pct;
-  eyesMood(pct);
+  eyesMood();
   if (from === pct || reduced()) { el.textContent = pct + '%'; return; }
   const t0 = performance.now(), dur = 900;
   const step = (t) => {
@@ -419,6 +430,12 @@ function splashWater() {
   const n = W.cols.length, c = Math.floor(n * (0.3 + Math.random() * 0.4));
   for (let i = -4; i <= 4; i++) { const col = W.cols[c + i]; if (col) col.v += 70 * (1 - Math.abs(i) / 5); } // dopad doprostřed
   for (let i = 0; i < 14; i++) W.bubbles.push({ x: 0.3 + Math.random() * 0.4, y: 1.02 + Math.random() * 0.25, r: 1.5 + Math.random() * 3, s: 0.25 + Math.random() * 0.35, ph: Math.random() * 6 });
+}
+function pokeWater(fx, power) {
+  if (reduced()) return;
+  const n = W.cols.length, c = Math.round(clamp(fx, 0, 1) * (n - 1));
+  for (let i = -3; i <= 3; i++) { const col = W.cols[c + i]; if (col) col.v += power * (1 - Math.abs(i) / 4); }
+  if (power > 40) for (let i = 0; i < 6; i++) W.bubbles.push({ x: clamp(fx + (Math.random() - 0.5) * 0.15, 0.1, 0.9), y: 1.02 + Math.random() * 0.1, r: 1 + Math.random() * 2.5, s: 0.3 + Math.random() * 0.3, ph: Math.random() * 6 });
 }
 function waterFrame(dt) {
   const cv = $('#water'); if (!cv || !dt) return;
@@ -483,51 +500,113 @@ function applyTheme() {
 darkMQ.addEventListener?.('change', () => { if (config.theme === 'auto') applyTheme(); });
 applyTheme();
 
-/* ===== tečkové oči v kapce (maskot rodiny jendovyapky) ===== */
-const EYE = { lx: 0, ly: 0, happy: 0, sq: 0, wide: 0 }, TGT = { lx: 0, ly: 0, happy: 0, sq: 0, wide: 0 };
-let blinkAt = 0, nextBlink = 1200, nextLook = 0, hop = 0, joyUntil = 0;
-function eyesMood(pct) {
-  TGT.happy = pct >= 100 || performance.now() < joyUntil ? 1 : 0;
-  TGT.sq = pct < 25 ? 0.55 : 0; // žízeň → přivřené oči
-  TGT.wide = pct >= 50 && pct < 100 ? 0.4 : 0;
+/* ===== robotí oči v kapce (tečkové oči rodiny jendovyapky, styl Cozmo) =====
+   Každé oko = zaoblený obdélník z teček. Horní víčko se dá naklonit (smutek, ospalost), spodní ho zezdola
+   ukusuje do obloučku (radost ∩). Oči těkají, sledují prst, mrkají (i dvakrát) a reagují na pití a dotek. */
+const EW = 120, EH = 60; // velikost plátna očí v CSS px
+const EYE = { lx: 0, ly: 0, w: 1, h: 1, lid: 0, tilt: 0, joy: 0 }, TGT = { lx: 0, ly: 0, w: 1, h: 1, lid: 0, tilt: 0, joy: 0 };
+let blinkAt = -9e9, blinkTwice = false, nextBlink = 1500, nextLook = 0, followUntil = 0, hop = 0, hopV = 0, moodUntil = 0, moodNow = 'normal';
+const MOODS = {
+  normal: { w: 1, h: 1, lid: 0, tilt: 0, joy: 0 },
+  thirsty: { w: 1, h: 0.95, lid: 0.28, tilt: 0.45, joy: 0 },      // víčka spadlá ven = smutné
+  happy: { w: 1.04, h: 1, lid: 0, tilt: 0, joy: 0.55 },
+  wide: { w: 1.12, h: 1.18, lid: 0, tilt: 0, joy: 0 },            // překvapení
+  sleepy: { w: 1.02, h: 0.9, lid: 0.55, tilt: -0.15, joy: 0 },
+  proud: { w: 1.06, h: 1.02, lid: 0.1, tilt: -0.2, joy: 0.45 },  // cíl splněn – spokojeně přimhouřené
+};
+function baseMood() {
+  const p = ui.shownPct ?? 0, h = new Date().getHours();
+  if (h >= 23 || h < 6) return 'sleepy';
+  return p >= 100 ? 'proud' : p < 25 ? 'thirsty' : 'normal';
 }
-function eyesJoy() { hop = 1; joyUntil = performance.now() + 1400; TGT.happy = 1; setTimeout(() => eyesMood(ui.shownPct ?? 0), 1450); }
-function drawEye(g, cx, cy, w, h, happy, under) {
-  const P = 4.2, R = 1.45;
-  for (let y = -12.6; y <= 12.6; y += P) for (let x = -10.5; x <= 10.5; x += P) {
+function setMood(m, ms = 0) { moodNow = m; moodUntil = ms ? performance.now() + ms : 0; Object.assign(TGT, MOODS[m]); }
+function eyesMood() { if (performance.now() > moodUntil) setMood(baseMood()); }
+function eyesJoy() { // napil ses: překvapení → radost → poskok
+  setMood('wide', 260); hopV = -260;
+  setTimeout(() => setMood('happy', 1500), 260);
+}
+function eyesBlink(twice) { blinkAt = performance.now(); blinkTwice = twice; }
+function drawEye(g, cx, cy, side, under) {
+  const P = 3.7, R = 1.3; // rozteč a velikost teček (jemná LED matice)
+  const w = 27 * EYE.w, hh = 33 * EYE.h;
+  const t = performance.now() - blinkAt, bl = blinkTwice ? 360 : 170;
+  const blink = t >= 0 && t < bl ? Math.abs(Math.cos(((t % 170) / 170) * Math.PI)) : 1;
+  const h = Math.max(3, hh * blink), r = Math.min(w, h) * 0.3;
+  for (let y = -P * 5; y <= P * 5; y += P) for (let x = -P * 4; x <= P * 4; x += P) {
     const ax = Math.abs(x), ay = Math.abs(y);
     if (ax > w / 2 || ay > h / 2) continue;
-    const r = Math.min(w, h) * 0.38, dx = Math.max(0, ax - (w / 2 - r)), dy = Math.max(0, ay - (h / 2 - r));
+    const dx = Math.max(0, ax - (w / 2 - r)), dy = Math.max(0, ay - (h / 2 - r));
     if (Math.hypot(dx, dy) > r) continue;
-    if (happy > 0.3 && y > -h * 0.05) continue; // ∩
-    g.fillStyle = under && under(cx + x, cy + y) ? '#F5F0E8' : INK; // tečky pod hladinou světlé
-    g.beginPath(); g.arc(cx + x, cy + y, R, 0, 7); g.fill();
+    // horní víčko nakloněné k vnějšímu kraji (side = -1 levé oko, 1 pravé)
+    if (y < -h / 2 + EYE.lid * h + EYE.tilt * (x * side) * 0.45) continue;
+    // radost: spodek oka ukousnutý obloukem → ∩
+    if (EYE.joy > 0.02 && y > h / 2 - EYE.joy * h * 0.95 - EYE.joy * h * 0.6 * (1 - (x / (w / 2)) ** 2)) continue;
+    const px = cx + x, py = cy + y;
+    g.fillStyle = under && under(px, py) ? '#F5F0E8' : INK; // pod hladinou světlé
+    g.globalAlpha = 0.18; g.beginPath(); g.arc(px, py, R * 2.2, 0, 7); g.fill(); // jemná záře jako LED
+    g.globalAlpha = 1; g.beginPath(); g.arc(px, py, R, 0, 7); g.fill();
   }
 }
 let lastT = 0;
 function eyesFrame(t) {
   const dt = Math.min(0.033, (t - (lastT || t)) / 1000); lastT = t;
   if (!document.hidden) waterFrame(dt);
-  const cv = $('#eyes');
-  if (cv && !document.hidden) {
+  const cv = $('#eyes'), orb = $('#orb');
+  if (cv && orb && !document.hidden) {
     const g = cv.getContext('2d'), dpr = Math.min(2, devicePixelRatio || 1);
-    if (cv.width !== 96 * dpr) { cv.width = 96 * dpr; cv.height = 48 * dpr; }
+    if (cv.width !== EW * dpr) { cv.width = EW * dpr; cv.height = EH * dpr; }
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (t > nextBlink) { blinkAt = t; nextBlink = t + 2400 + Math.random() * 3200; }
-    if (t > nextLook) { TGT.lx = (Math.random() - 0.5) * 9; TGT.ly = (Math.random() - 0.5) * 4; nextLook = t + 1300 + Math.random() * 2600; }
-    const bk = (t - blinkAt) / 170, blink = bk >= 0 && bk < 1 ? Math.abs(Math.cos(bk * Math.PI)) : 1;
-    for (const k in TGT) EYE[k] += (TGT[k] - EYE[k]) * 0.14;
-    hop = Math.max(0, hop - 0.05);
-    g.clearRect(0, 0, 96, 48);
-    const ox = cv.offsetLeft, oy = cv.offsetTop, under = W.surfAt ? (x, y) => oy + y > W.surfAt(ox + x) : null;
-    const by = 24 - Math.sin(hop * Math.PI) * 5;
-    const w = 17 + EYE.wide * 3, h = (21 + EYE.wide * 2) * blink * (1 - EYE.sq * 0.55);
-    drawEye(g, 30 + EYE.lx, by + EYE.ly + EYE.sq * 3, w, Math.max(3, h), EYE.happy, under);
-    drawEye(g, 66 + EYE.lx, by + EYE.ly + EYE.sq * 3, w, Math.max(3, h), EYE.happy, under);
+    eyesMood();
+    // mrkání (občas dvakrát rychle za sebou), ospalé oči mrkají častěji
+    if (t > nextBlink) { eyesBlink(Math.random() < 0.22); nextBlink = t + (moodNow === 'sleepy' ? 1800 : 2600) + Math.random() * 3400; }
+    // těkání očima: rychlý skok na nový bod (sakáda), mezi tím klid; když se ťuká nebo táhne, sledují prst
+    if (t > nextLook && t > followUntil) {
+      TGT.lx = Math.random() < 0.25 ? 0 : (Math.random() - 0.5) * 16; TGT.ly = (Math.random() - 0.5) * 6;
+      if (moodNow === 'thirsty') TGT.ly = 3 + Math.random() * 2; // smutně kouká dolů
+      nextLook = t + 900 + Math.random() * 2600;
+    }
+    const fast = 1 - Math.pow(0.0009, dt), slow = 1 - Math.pow(0.004, dt); // nezávislé na fps
+    for (const key in TGT) EYE[key] += (TGT[key] - EYE[key]) * (key === 'lx' || key === 'ly' ? fast : slow);
+    // poskok na pružině, dýchání a naklonění kapky za pohledem
+    hopV += (-hop * 520 - hopV * 14) * dt; hop += hopV * dt;
+    if (!reduced()) {
+      const breathe = Math.sin(t / 900) * 0.012;
+      orb.style.translate = `0 ${hop.toFixed(2)}px`;
+      orb.style.scale = `${(1 + breathe - hop * 0.002).toFixed(4)} ${(1 - breathe + hop * 0.003).toFixed(4)}`;
+      orb.style.rotate = `${(EYE.lx * 0.18).toFixed(2)}deg`;
+    }
+    g.clearRect(0, 0, EW, EH);
+    const sc = cv.clientWidth / EW, ox = cv.offsetLeft, oy = cv.offsetTop; // oči se zmenšují s kapkou
+    const under = W.surfAt ? (x, y) => oy + y * sc > W.surfAt(ox + x * sc) : null;
+    drawEye(g, EW / 2 - 21 + EYE.lx, EH / 2 + EYE.ly, -1, under);
+    drawEye(g, EW / 2 + 21 + EYE.lx, EH / 2 + EYE.ly, 1, under);
   }
   requestAnimationFrame(eyesFrame);
 }
 requestAnimationFrame(eyesFrame);
+// oči sledují prst kdekoliv na přehledu
+function lookAt(x, y) {
+  const orb = $('#orb'); if (!orb || ui.tab !== 'home') return;
+  const r = orb.getBoundingClientRect(), dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height * 0.4);
+  const d = Math.hypot(dx, dy) || 1;
+  TGT.lx = (dx / d) * Math.min(9, d / 14); TGT.ly = (dy / d) * Math.min(4, d / 30);
+  followUntil = performance.now() + 1400; nextLook = followUntil;
+}
+addEventListener('pointermove', (e) => lookAt(e.clientX, e.clientY), { passive: true });
+addEventListener('pointerdown', (e) => lookAt(e.clientX, e.clientY), { passive: true });
+// ťuknutí do kapky: poskočí, zasměje se a voda se v tom místě rozčeří; tažením prstu dělá vlny
+function pokeOrb(e) {
+  const r = e.currentTarget.getBoundingClientRect();
+  haptic(18);
+  pokeWater((e.clientX - r.left) / r.width, 60);
+  hopV = -200; setMood('happy', 900);
+  if (Math.random() < 0.3) setTimeout(() => eyesBlink(true), 300);
+}
+function stirOrb(e) {
+  if (e.pointerType === 'mouse' && !e.buttons) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  pokeWater((e.clientX - r.left) / r.width, Math.min(30, Math.abs(e.movementX || 0) * 3 + 4));
+}
 
 /* ===== PITÍ ===== */
 function logWater(ml, type) {
@@ -1152,6 +1231,22 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet
 // bez přiblížení dvojitým ťuknutím a gestem (iOS ignoruje user-scalable=no)
 addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
 addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
+// přehled na výšku displeje: změřit hlavičku a dolní lištu
+function measureChrome() {
+  const r = document.documentElement.style, dock = $('#dock');
+  r.setProperty('--toph', $('.top').offsetHeight + 'px');
+  r.setProperty('--dockh', (innerHeight - dock.getBoundingClientRect().top + 14) + 'px');
+  fitOrb();
+}
+// kapka zabere, co na přehledu zbyde (mezi týdnem a pitím)
+function fitOrb() {
+  const wrap = $('.orbwrap'), orb = $('#orb'); if (!wrap || !orb) return;
+  orb.style.setProperty('--o', clamp(wrap.clientHeight - 74, 150, 260) + 'px');
+}
+addEventListener('resize', () => { measureChrome(); fitOrb(); });
+// velký nadpis se při scrollu zmenší
+addEventListener('scroll', () => document.body.classList.toggle('scrolled', scrollY > 12), { passive: true });
 
 /* ===== cloud (Google Apps Script – stejný jako ve staré verzi) ===== */
 function merge(a, b) {
@@ -1293,6 +1388,7 @@ $('[data-act="settings"]').innerHTML = ic('sliders');
 $('.sheet__head .ibtn').innerHTML = ic('x');
 document.body.dataset.tab = ui.tab;
 render();
+measureChrome(); setTimeout(measureChrome, 1500); // po úvodní animaci lišty
 moveLamp(true);
 // úvod: krátký, ťuknutím přeskočit
 (() => {
