@@ -1,0 +1,11 @@
+{
+  // Trackerrr – soukromý cloud. Každý klíč = jeden Durable Object (SQLite), uložený pod SHA-256 otiskem klíče.
+  // Nasazení: cd sync && npx wrangler deploy
+  "name": "trackerrr-sync",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }],
+  "workers_dev": true,
+  "observability": { "enabled": false }
+}

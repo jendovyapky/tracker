@@ -1,8 +1,7 @@
 'use strict';
 /* Trackerrr – pití, suplementy a jídlo. Bez frameworku, bez buildu (stejně jako ostatní jendovyapky). */
 
-const VERSION = '2.1';
-const API = 'https://script.google.com/macros/s/AKfycbzqRrJO7skZKFusk_YjWmwHSaSs2Nf_MO0dBqZBr4_Qpqt26HnZIiWBk4xVdsfLYKmu/exec';
+const VERSION = '2.2';
 // Klíče v localStorage zůstávají ze staré verze → data v telefonu se neztratí a stará verze by s nimi pořád uměla pracovat.
 const KS = 'trackerrr_state_v10', KC = 'trackerrr_config_v10';
 
@@ -62,6 +61,7 @@ const ICONS = {
   glass: '<path d="M5 3h14l-1.6 16.2a2 2 0 0 1-2 1.8H8.6a2 2 0 0 1-2-1.8Z"/><path d="M5.6 9h12.8"/>',
   bottle: '<path d="M10 2h4v3l1.5 2.5a3 3 0 0 1 .5 1.7V20a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V9.2a3 3 0 0 1 .5-1.7L10 5z"/><path d="M8 12h8"/>',
   coffee: '<path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><path d="M7 2v2M11 2v2"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   star: '<path d="M12 2.8l2.84 5.76 6.36.92-4.6 4.49 1.08 6.33L12 17.32 6.32 20.3l1.08-6.33-4.6-4.49 6.36-.92z"/>',
 };
 const starsRow = (n) => `<span class="srow" aria-label="${n} z 5">${[1, 2, 3, 4, 5].map((i) => ic('star', i <= n ? 'on' : '')).join('')}</span>`;
@@ -156,7 +156,7 @@ function commit({ sync = true, buzz = true } = {}) {
   state.lastUpdated = Date.now();
   persist();
   render();
-  if (sync && config.syncRoom) { clearTimeout(upTimer); upTimer = setTimeout(upload, 1500); }
+  if (sync && config.cloudKey) { clearTimeout(upTimer); upTimer = setTimeout(upload, 1500); }
 }
 function settingsChanged() {
   config.settingsUpdated = Date.now();
@@ -780,11 +780,21 @@ function openSettings() {
       ${notifOk ? '' : '<p class="note">Na iPhonu fungují jen v appce přidané na plochu.</p>'}
     </div>
 
-    <h3 class="sec">${ic('cloud')} Synchronizace</h3>
+    <h3 class="sec">${ic('cloud')} Soukromý cloud</h3>
+    ${config.syncRoom ? `<div class="card set legacy">
+      <p class="note"><b>Starý Google cloud („${esc(config.syncRoom)}“) není bezpečný.</b> Jeho adresa je ve veřejném kódu a dá se z ní přečíst všechno. Přenes data do soukromého cloudu.</p>
+      <button type="button" class="btn btn--food sm" id="migrate">${ic('upload')} Přenést a smazat ze starého cloudu</button>
+    </div>` : ''}
     <div class="card set">
-      <p class="note">Stejný kód na více zařízeních = stejná data. ${config.syncRoom ? `Připojeno: <b>${esc(config.syncRoom)}</b>` : 'Nepřipojeno.'}</p>
-      <div class="inrow"><input id="room" class="in" type="text" autocomplete="off" autocapitalize="off" placeholder="Kód…" value="${esc(config.syncRoom)}"><button type="button" class="btn btn--water sm" id="roomSave">${config.syncRoom ? 'Změnit' : 'Spárovat'}</button></div>
-      ${config.syncRoom ? `<div class="inrow"><button type="button" class="btn btn--ghost sm" id="syncNow">${ic('refresh')} Synchronizovat</button><button type="button" class="btn btn--ghost sm" id="roomOff">Odpojit</button></div>` : ''}
+      ${config.cloudKey ? `
+      <p class="note">Zapnuto. Data vidí jen zařízení s tímhle klíčem – nikomu ho neposílej.</p>
+      <div class="keybox"><code class="num" id="keyTxt">${ui.showKey ? fmtKey(config.cloudKey) : '••••-••••-…-' + config.cloudKey.slice(-4)}</code><button type="button" class="ibtn ghost" id="keyShow" aria-label="${ui.showKey ? 'Skrýt' : 'Ukázat'} klíč">${ic(ui.showKey ? 'x' : 'eye')}</button></div>
+      <div class="inrow"><button type="button" class="btn btn--ghost sm" id="keyLink">Další zařízení</button><button type="button" class="btn btn--ghost sm" id="syncNow">${ic('refresh')} Teď</button></div>
+      <div class="inrow"><button type="button" class="btn btn--ghost sm" id="cloudOff">Odpojit</button><button type="button" class="btn btn--danger sm" id="cloudDel">Smazat z cloudu</button></div>`
+      : `
+      <p class="note">Záloha a stejná data na více zařízeních. Appka vytvoří tajný klíč, bez kterého se k datům nikdo nedostane.</p>
+      <button type="button" class="btn btn--water sm" id="cloudOn">${ic('cloud')} Zapnout cloud</button>
+      <div class="inrow"><input id="keyIn" class="in" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Mám klíč z jiného zařízení…"><button type="button" class="btn btn--ghost sm" id="keyJoin">Připojit</button></div>`}
     </div>
 
     <h3 class="sec">${ic('download')} Data</h3>
@@ -810,15 +820,32 @@ function openSettings() {
     $('#dAdd') && ($('#dAdd').onclick = () => { config.drinks.push({ id: 'd_' + Date.now(), name: 'Nový', ml: 330, icon: 'bottle' }); settingsChanged(); paint(); });
     $('#nToggle').onclick = toggleNotifs.bind(null, paint);
     $$('[data-ni]').forEach((b) => (b.onclick = () => { config.notifInterval = +b.dataset.ni; haptic(); commit({ sync: false }); paint(); }));
-    $('#roomSave').onclick = () => {
-      const code = $('#room').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-      if (!code) return;
-      config.syncRoom = code; persist(); paint();
-      toast('Cloud propojen', `Místnost „${code}“`, 'ok');
-      syncNow();
-    };
-    $('#syncNow') && ($('#syncNow').onclick = () => syncNow(true));
-    $('#roomOff') && ($('#roomOff').onclick = () => { config.syncRoom = ''; ui.sync = 'off'; persist(); render(); paint(); toast('Odpojeno', 'Data zůstala v telefonu i v cloudu.'); });
+    const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
+    on('migrate', migrateLegacy);
+    on('cloudOn', () => connectKey(newKey()));
+    on('keyJoin', () => {
+      const k = normKey($('#keyIn').value);
+      if (!validKey(k)) { toast('Neplatný klíč', 'Má 24 znaků, třeba abcd-efgh-…', 'err'); return; }
+      connectKey(k);
+    });
+    on('keyShow', () => { ui.showKey = !ui.showKey; haptic(); paint(); });
+    on('keyLink', async () => {
+      const link = `${location.origin}${location.pathname}#klic=${fmtKey(config.cloudKey)}`;
+      try {
+        if (navigator.share) await navigator.share({ title: 'Trackerrr – připojení', url: link });
+        else { await navigator.clipboard.writeText(link); toast('Odkaz zkopírovaný', 'Otevři ho na druhém zařízení. Nikomu jinému ho neposílej.', 'ok'); }
+      } catch {}
+    });
+    on('syncNow', () => syncNow(true));
+    on('cloudOff', () => {
+      if (!confirm('Odpojit tohle zařízení od cloudu? Data v cloudu zůstanou. Bez klíče se k nim nedostaneš – ulož si ho, nebo ho máš v jiném zařízení.')) return;
+      config.cloudKey = ''; ui.sync = 'off'; ui.showKey = false; persist(); render(); paint(); toast('Odpojeno', 'Data zůstala v telefonu.');
+    });
+    on('cloudDel', async () => {
+      if (!confirm('Smazat všechna data z cloudu? V tomhle zařízení zůstanou.')) return;
+      try { await cloud('DELETE'); config.cloudKey = ''; ui.sync = 'off'; persist(); render(); paint(); toast('Cloud smazaný', 'Data zůstala jen v telefonu.', 'ok'); }
+      catch { toast('Nepovedlo se', 'Zkus to znovu.', 'err'); }
+    });
     $('#exp').onclick = exportData;
     $('#imp').onclick = () => $('#importFile').click();
     $('#recover').onclick = recoverOld;
@@ -835,7 +862,8 @@ function toggleNotifs(paint) {
   });
 }
 function exportData() {
-  const blob = new Blob([JSON.stringify({ ...state, _config: config }, null, 1)], { type: 'application/json' });
+  const { cloudKey, syncRoom, ...cfg } = config; // klíč do zálohy nepatří (soubor se dá omylem někomu poslat)
+  const blob = new Blob([JSON.stringify({ ...state, _config: cfg }, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `trackerrr_zaloha_${TODAY}.json`;
@@ -876,7 +904,7 @@ function recoverOld() {
 }
 function wipeAll() {
   if (!confirm('Smazat všechna data v tomhle zařízení? Doporučuju předtím Export.')) return;
-  if (!confirm(config.syncRoom ? 'Opravdu? Kopie v cloudu zůstane – appku odpojím, aby se data nevrátila.' : 'Opravdu? Nejde to vrátit.')) return;
+  if (!confirm(config.cloudKey ? 'Opravdu? Kopie v cloudu zůstane (smazat ji jde v Soukromý cloud). Appku odpojím, aby se data nevrátila.' : 'Opravdu? Nejde to vrátit.')) return;
   [KS, KC, 'trackerrr_state_v9'].forEach((k) => localStorage.removeItem(k));
   location.reload();
 }
@@ -952,7 +980,7 @@ const ACT = {
   allDays: openAllDays,
   settings: openSettings,
   closeSheet,
-  sync: () => { if (!config.syncRoom) { openSettings(); return; } syncNow(true); },
+  sync: () => { if (!config.cloudKey) { openSettings(); return; } syncNow(true); },
   undo: () => { const u = toastUndo; toastUndo = null; $('#toast').classList.remove('on'); if (u) { u(); haptic(20); } },
 };
 document.addEventListener('click', (e) => {
@@ -1004,27 +1032,34 @@ function applyRemoteSettings() {
   if (Array.isArray(s.places)) config.places = s.places;
   config.settingsUpdated = s.updatedAt;
 }
-const post = (keepalive = false) => fetch(API, { method: 'POST', body: JSON.stringify({ date: config.syncRoom, data: state }), keepalive });
-let syncing = false;
+// Vlastní soukromý cloud (Cloudflare Worker v sync/): data jen pod tajným klíčem, server je spojí a vrátí.
+const SYNC = 'https://trackerrr-sync.jendovyapky.workers.dev/data';
+const KEY_ABC = 'abcdefghijkmnpqrstuvwxyz23456789'; // bez l, 0, 1 (pletou se)
+const newKey = () => [...crypto.getRandomValues(new Uint8Array(24))].map((b) => KEY_ABC[b & 31]).join('');
+const normKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const fmtKey = (k) => k.match(/.{1,4}/g).join('-');
+const validKey = (k) => /^[a-km-z2-9]{24}$/.test(k);
+async function cloud(method = 'POST', keepalive = false) {
+  const r = await fetch(SYNC, { method, keepalive, cache: 'no-store',
+    headers: { Authorization: 'Bearer ' + config.cloudKey, 'Content-Type': 'application/json' },
+    body: method === 'POST' ? JSON.stringify(state) : undefined });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+let syncing = false, syncAgain = false;
 async function syncNow(manual = false) {
-  if (!config.syncRoom) { ui.sync = 'off'; renderSyncBtn(); return; }
-  if (syncing) return;
+  if (!config.cloudKey) { ui.sync = 'off'; renderSyncBtn(); return; }
+  if (syncing) { syncAgain = true; return; }
   syncing = true; ui.sync = 'busy'; renderSyncBtn();
   if (manual) haptic();
   try {
     if (!state._settings && config.settingsUpdated) state._settings = settingsSnapshot();
-    const r = await fetch(API, { cache: 'no-store' });
-    if (!r.ok) throw new Error(r.status);
-    const all = await r.json();
-    const remote = all && all[config.syncRoom];
-    if (remote && typeof remote === 'object') {
-      state = merge(state, remote); DEL = new Set(state.deletedLogs);
-      applyRemoteSettings();
-      persist();
-    }
-    await post();
+    const remote = await cloud();
+    state = merge(state, remote); DEL = new Set(state.deletedLogs); // spojit i s tím, co přibylo během požadavku
+    applyRemoteSettings();
+    persist();
     ui.sync = 'ok';
-    if (manual) toast('Synchronizováno', `Místnost „${config.syncRoom}“`, 'ok');
+    if (manual) toast('Synchronizováno', 'Data jsou v tvém soukromém cloudu.', 'ok');
   } catch {
     ui.sync = 'err';
     if (manual) toast('Cloud nejde', 'Zkus to za chvíli. Data jsou v bezpečí v telefonu.', 'err');
@@ -1032,14 +1067,51 @@ async function syncNow(manual = false) {
   syncing = false;
   render();
   if (sheetPaint) sheetPaint();
+  if (syncAgain) { syncAgain = false; syncNow(); }
 }
-async function upload() {
-  if (!config.syncRoom || syncing) return;
-  ui.sync = 'busy'; renderSyncBtn();
-  try { await post(); ui.sync = 'ok'; } catch { ui.sync = 'err'; }
-  renderSyncBtn();
+const upload = () => syncNow();
+addEventListener('pagehide', () => { if (upTimer && config.cloudKey) { clearTimeout(upTimer); upTimer = 0; try { cloud('POST', true); } catch {} } });
+async function connectKey(key) {
+  config.cloudKey = key; persist();
+  await syncNow();
+  if (ui.sync === 'ok') toast('Cloud zapnutý', 'Data se teď synchronizují.', 'ok');
+  else toast('Cloud nejde', 'Klíč je uložený, zkusím to znovu později.', 'err');
 }
-addEventListener('pagehide', () => { if (upTimer && config.syncRoom) { clearTimeout(upTimer); upTimer = 0; try { post(true); } catch {} } });
+
+// Starý cloud (Google Apps Script): kdokoliv s adresou z veřejného repa mohl číst data všech místností.
+// Jednorázově se přenese do nového cloudu a místnost se tam přepíše prázdnými daty.
+const LEGACY_API = 'https://script.google.com/macros/s/AKfycbzqRrJO7skZKFusk_YjWmwHSaSs2Nf_MO0dBqZBr4_Qpqt26HnZIiWBk4xVdsfLYKmu/exec';
+async function migrateLegacy() {
+  const room = config.syncRoom; if (!room) return;
+  if (!confirm(`Přenést data z místnosti „${room}“ do soukromého cloudu a ve starém Google cloudu je přepsat prázdnými?\n\nNejdřív aktualizuj Trackerrr na všech zařízeních – stará verze by data do Google cloudu zase nahrála.`)) return;
+  toast('Přenáším…', 'Stahuju ze starého cloudu.', 'sync');
+  try {
+    const r = await fetch(LEGACY_API, { cache: 'no-store' });
+    if (!r.ok) throw new Error('legacy');
+    const all = await r.json(), old = all && all[room];
+    if (old && typeof old === 'object') { state = merge(state, old); DEL = new Set(state.deletedLogs); persist(); }
+    if (!config.cloudKey) config.cloudKey = newKey();
+    const saved = await cloud();
+    const need = Object.keys(state).filter(isDay).length, got = Object.keys(saved).filter(isDay).length;
+    if (got < need) throw new Error('verify'); // v novém cloudu musí být všechno, jinak starý nemažeme
+    state = merge(state, saved); DEL = new Set(state.deletedLogs);
+    await fetch(LEGACY_API, { method: 'POST', body: JSON.stringify({ date: room, data: { lastUpdated: Date.now(), deletedLogs: [], moved: true } }) });
+    config.syncRoom = ''; ui.sync = 'ok'; persist(); render();
+    if (sheetPaint) sheetPaint();
+    toast('Hotovo', `Přeneseno ${got} ${plural(got, 'den', 'dny', 'dní')}. Ve starém cloudu je místnost prázdná.`, 'ok');
+  } catch (e) {
+    toast('Přenos se nepovedl', e.message === 'verify' ? 'Nový cloud nemá všechno – starý jsem nechal být.' : 'Zkus to znovu, nic se nesmazalo.', 'err');
+  }
+}
+// odkaz pro další zařízení: …/#klic=xxxx-xxxx-… (část za # se na server neposílá)
+function keyFromLink() {
+  const m = /[#&]klic=([a-z0-9-]+)/i.exec(location.hash);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  const k = normKey(m[1]);
+  if (!validKey(k) || k === config.cloudKey) return;
+  if (confirm('Připojit tohle zařízení k tvému cloudu? Data z obou míst se spojí.')) connectKey(k);
+}
 
 /* ===== upozornění ===== */
 async function notify(title, body, tag) {
@@ -1076,7 +1148,7 @@ function tick() {
 }
 setInterval(tick, 30000);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { tick(); if (config.syncRoom) syncNow(); }
+  if (document.visibilityState === 'visible') { tick(); if (config.cloudKey) syncNow(); }
 });
 
 /* ===== start ===== */
@@ -1096,6 +1168,7 @@ render();
   boot.addEventListener('click', done, { once: true });
   setTimeout(done, 1650);
 })();
-if (config.syncRoom) syncNow(); else checkNotifs();
+keyFromLink();
+if (config.cloudKey) syncNow(); else checkNotifs();
 // service worker jen na webu (lokálně bez cache, ať je vidět každá změna)
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

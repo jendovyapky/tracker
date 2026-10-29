@@ -16,7 +16,11 @@
   (den = `{ water, waterLogs[{id,amount,type,time}], vitamins{id:[timestamp]}, food[{id,category,name,emoji,stars,time,place,detail,edited}] }`).
 - Mazání = id/timestamp do `deletedLogs` (náhrobky), slučování (`merge`) = sjednocení podle id minus náhrobky; upravené jídlo vyhrává podle `edited`.
 - Nastavení, které se synchronizuje (cíl, nápoje, suplementy), je ve stavu pod `_settings` s `updatedAt` – vyhrává novější.
-- Cloud: Google Apps Script (URL v `API`), GET vrací všechny místnosti, POST `{date: kód, data: state}`. Skript sám jsme neměnili.
+- **Soukromý cloud** (od 2.1): Cloudflare Worker `trackerrr-sync` ve složce `sync/` (https://trackerrr-sync.jendovyapky.workers.dev/data, nasazení `cd sync && npx wrangler deploy`, účet Jendovyapky).
+  Přístup jen 24znakovým náhodným klíčem (`config.cloudKey`, ~120 bitů) v hlavičce `Authorization: Bearer` – nikdy v URL. Durable Object `Vault` podle SHA-256 otisku klíče, každý den = vlastní klíč v úložišti (`d:YYYY-MM-DD`), `meta` = náhrobky + `_settings`.
+  POST = server spojí a vrátí všechno, GET = přečíst, DELETE = smazat. CORS jen pro tracker.jendovyapky.eu, *.pages.dev projektu, jendovyapky.github.io a localhost. `mergeDay()` ve workeru musí zůstat stejný jako `merge()` v app.js.
+  Další zařízení se připojí odkazem `#klic=…` (fragment se na server neposílá) nebo vepsáním klíče. Klíč se nedává do exportu.
+- **Starý Google cloud je nebezpečný** (adresa skriptu je ve veřejné historii repa a GET vrací data všech místností). Appka ho umí jen jednorázově přenést (`migrateLegacy`) a místnost tam přepsat prázdnými daty. Nepoužívat na nic dalšího.
 - Upozornění chodí jen při otevřené / uspané appce (žádný push server).
 
 ## Pravidla
