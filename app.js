@@ -1,7 +1,7 @@
 'use strict';
 /* Trackerrr – pití, suplementy a jídlo. Bez frameworku, bez buildu (stejně jako ostatní jendovyapky). */
 
-const VERSION = '2.4';
+const VERSION = '2.5';
 // Klíče v localStorage zůstávají ze staré verze → data v telefonu se neztratí a stará verze by s nimi pořád uměla pracovat.
 const KS = 'trackerrr_state_v10', KC = 'trackerrr_config_v10';
 
@@ -94,6 +94,7 @@ if (!Array.isArray(config.drinks)) config.drinks = [
 ];
 if (!Array.isArray(config.places)) config.places = [];
 if (config.haptics === undefined) config.haptics = true;
+if (!config.theme) config.theme = 'dark';
 if (config.settingsUpdated === undefined) config.settingsUpdated = hadConfig ? 1 : 0; // starý telefon s vlastním seznamem vyhraje nad čistou instalací
 config.customSuplementsList.forEach(normSupp);
 
@@ -391,7 +392,7 @@ function renderHome() {
     </div>
     <button type="button" class="grow grow--food" data-act="tab" data-tab="food">
       <span class="gi">${ic('food')}</span>
-      <span class="grow__t"><b>Jídlo</b><small>${last ? `${esc(last.emoji || '')} ${esc(lastS.detail || lastS.place)}` : 'Nic zapsáno'}${snacks ? ` · +${snacks} ${plural(snacks, 'svačina', 'svačiny', 'svačin')}` : ''}</small></span>
+      <span class="grow__t"><b>Jídlo</b><small>${last ? `${esc(foodEmoji(last))} ${esc(lastS.detail || lastS.place)}` : 'Nic zapsáno'}${snacks ? ` · +${snacks} ${plural(snacks, 'svačina', 'svačiny', 'svačin')}` : ''}</small></span>
       <span class="meals" aria-label="Snídaně, oběd, večeře">${['Snídaně', 'Oběd', 'Večeře'].map((c) => `<i class="${has(c) ? 'on' : ''}" title="${c}"></i>`).join('')}</span>
     </button>
   </div>`;
@@ -483,6 +484,19 @@ function waterFrame(dt) {
   const pct = $('#orbPct'); if (pct) pct.style.setProperty('--cut', (surf(S / 2, 1, 0) - pct.offsetTop) + 'px');
 }
 
+/* ===== vzhled: tmavý (výchozí) / světlý / podle telefonu ===== */
+let INK = '#F5F0E8';
+const darkMQ = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const t = config.theme === 'auto' ? (darkMQ.matches ? 'dark' : 'light') : config.theme;
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem('trackerrr_theme', t); } catch {}
+  INK = t === 'light' ? '#10233D' : '#F5F0E8';
+  $('meta[name="theme-color"]').setAttribute('content', t === 'light' ? '#F5F0E8' : '#0B1626');
+}
+darkMQ.addEventListener?.('change', () => { if (config.theme === 'auto') applyTheme(); });
+applyTheme();
+
 /* ===== tečkové oči v kapce (maskot rodiny jendovyapky) ===== */
 const EYE = { lx: 0, ly: 0, happy: 0, sq: 0, wide: 0 }, TGT = { lx: 0, ly: 0, happy: 0, sq: 0, wide: 0 };
 let blinkAt = 0, nextBlink = 1200, nextLook = 0, hop = 0, joyUntil = 0;
@@ -500,7 +514,7 @@ function drawEye(g, cx, cy, w, h, happy, under) {
     const r = Math.min(w, h) * 0.38, dx = Math.max(0, ax - (w / 2 - r)), dy = Math.max(0, ay - (h / 2 - r));
     if (Math.hypot(dx, dy) > r) continue;
     if (happy > 0.3 && y > -h * 0.05) continue; // ∩
-    g.fillStyle = under && under(cx + x, cy + y) ? '#F5F0E8' : '#10233D'; // tečky pod hladinou světlé
+    g.fillStyle = under && under(cx + x, cy + y) ? '#F5F0E8' : INK; // tečky pod hladinou světlé
     g.beginPath(); g.arc(cx + x, cy + y, R, 0, 7); g.fill();
   }
 }
@@ -677,7 +691,26 @@ function openSuppEditor(id) {
 
 /* ===== JÍDLO ===== */
 const CATS = ['Snídaně', 'Svačina', 'Oběd', 'Večeře'];
-const EMOJIS = ['🍳', '🥖', '🍔', '🍕', '🍣', '🍜', '🍝', '🥗', '🌯', '🥙', '🍗', '🥩', '🍲', '🥪', '🍟', '🌮', '🥐', '🍰', '🍦', '☕'];
+const EMOJIS = ['🍳', '🥖', '🥪', '🍔', '🍕', '🌭', '🌯', '🥙', '🌮', '🍟', '🍗', '🥩', '🍖', '🥓', '🍣', '🍱', '🍤', '🥟', '🍜', '🍝', '🍛', '🍚', '🍲', '🥘',
+  '🥗', '🥣', '🧀', '🥐', '🥯', '🥨', '🥞', '🧇', '🍰', '🍩', '🍪', '🍫', '🍦', '🍎', '🍌', '🥑', '☕', '🧋', '🥤', '🍺', '🍷'];
+// Ikonka podle toho, co jsi jedl (pořadí je důležité: druh jídla má přednost před surovinou – „kuřecí bageta“ = 🥖).
+const FOOD_GUESS = [
+  [/bage|baguet/, '🥖'], [/sendvi|toust|toast|panin|club/, '🥪'], [/burger|big ?mac|mcchick|whopper|cheeseb/, '🍔'], [/pizz/, '🍕'],
+  [/hot ?dog|parek|parky|klobas/, '🌭'], [/burrit|wrap|tortil|quesad/, '🌯'], [/kebab|gyros|durum|falaf/, '🥙'], [/taco|nacho/, '🌮'],
+  [/sushi|maki|nigiri|poke/, '🍣'], [/bento|onigir/, '🍱'], [/krevet|shrimp|tempur/, '🍤'], [/dumpl|gyoz|knedlic|pirozk|pelmen/, '🥟'],
+  [/ramen|pho|nudl|udon|pad ?thai|wok/, '🍜'], [/spaget|testovin|pasta|lasagn|carbon|penne|gnocc|bolon/, '🍝'], [/curry|kari|tikka/, '🍛'],
+  [/rizot|ryz|risot/, '🍚'], [/polevk|vyvar|bujon|soup/, '🍲'], [/gulas|svickov|omack|segedin|rajsk/, '🥘'],
+  [/salat|caesar|bowl/, '🥗'], [/jogurt|musli|kase|ovesn|granol|cerea/, '🥣'], [/palacin|livan|pancak/, '🥞'], [/vafl|waffl/, '🧇'],
+  [/hranol|fries|batatk/, '🍟'], [/rizek|schnitz|kure|kuřec|chick|nugget|wings|kridel|krid/, '🍗'], [/steak|hovez|vepr|maso|pecen|zebir/, '🥩'],
+  [/slanin|bacon/, '🥓'], [/smazak|syr|chees/, '🧀'], [/vajic|omelet|miche|vejce|scrambl/, '🍳'], [/croiss|rohlik|pecivo|housk|chleb/, '🥐'],
+  [/bagel/, '🥯'], [/preclik|pretzel/, '🥨'], [/dort|zakus|cheesecak|kolac|buchta|struudl|strudl|muff|brownie/, '🍰'], [/donut|kobl/, '🍩'],
+  [/susenk|cookie/, '🍪'], [/cokolad|choco/, '🍫'], [/zmrzl|ice ?cream|gelat/, '🍦'], [/ovoce|jablk/, '🍎'], [/banan/, '🍌'], [/avokad|guac/, '🥑'],
+  [/kafe|kava|cappu|latte|espres|flat ?white/, '☕'], [/bubble|boba/, '🧋'], [/pivo|beer/, '🍺'], [/vino|wine/, '🍷'],
+];
+const fold = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const guessEmoji = (t) => { const x = fold(t); if (!x) return ''; for (const [re, e] of FOOD_GUESS) if (re.test(x)) return e; return ''; };
+// u starších záznamů (bez ručně vybrané ikonky) se ikonka odhadne z jídla – „Domácí | Kuřecí bageta“ už nebude pánvička
+const foodEmoji = (f) => (f.emojiManual ? f.emoji : guessEmoji(foodSplit(f).detail) || f.emoji) || '🍽️';
 const DEFAULT_PLACES = [
   { place: 'Domácí', emoji: '🍳' },
   { place: 'Bageterie Boulevard', emoji: '🥖', short: 'BB' },
@@ -713,7 +746,7 @@ function quickPlaces() {
   }
   return out;
 }
-function newFoodDraft() { return { cat: autoCat(), place: 'Domácí', detail: '', emoji: '🍳', stars: 5, edit: null, emojiOpen: false }; }
+function newFoodDraft() { return { cat: autoCat(), place: 'Domácí', detail: '', emoji: '🍳', placeEmoji: '🍳', manual: false, stars: 5, edit: null, emojiOpen: false }; }
 function renderFood() {
   const k = ui.active, fs = foods(getDay(k));
   const F = ui.food || (ui.food = newFoodDraft());
@@ -736,21 +769,26 @@ function renderFood() {
   <h3 class="sec">${ui.active === TODAY ? 'Dnes' : dayLabel(ui.active, { weekday: 'short', day: 'numeric', month: 'numeric' })} <span class="num">${fs.length}</span></h3>
   <div class="group">${fs.length ? fs.map((f) => { const s = foodSplit(f); return `
     <div class="row${F.edit === f.id ? ' sel' : ''}${f.id === ui.newId ? ' new' : ''}">
-      <span class="row__e">${esc(f.emoji || '🍽️')}</span>
+      <span class="row__e">${esc(foodEmoji(f))}</span>
       <button type="button" class="row__t" data-act="foodEdit" data-id="${f.id}" aria-label="Upravit"><small class="cat">${esc(f.category)} · <span class="num">${esc(f.time || hm(f.id))}</span></small><b>${esc(s.detail || s.place)}</b>${s.detail && s.place ? `<small>${esc(s.place)}</small>` : ''}</button>
       ${starsRow(+f.stars || 0)}
       <button type="button" class="ibtn ghost" data-act="rmFood" data-id="${f.id}" aria-label="Smazat">${ic('x')}</button>
     </div>`; }).join('') : '<p class="empty">Zatím žádné jídlo.</p>'}</div>
   <button type="button" class="btn btn--ghost" data-act="history">${ic('clock')} Historie a podniky</button>`;
   $('#fPlace').addEventListener('input', (e) => { F.place = e.target.value; });
-  $('#fDetail').addEventListener('input', (e) => { F.detail = e.target.value; });
+  $('#fDetail').addEventListener('input', (e) => {
+    F.detail = e.target.value;
+    if (F.manual) return; // ručně vybranou ikonku nepřepisovat
+    const em = guessEmoji(F.detail) || F.placeEmoji || F.emoji;
+    if (em !== F.emoji) { F.emoji = em; const b = $('.emoji'); if (b) { b.textContent = em; b.classList.remove('bump'); void b.offsetWidth; b.classList.add('bump'); } }
+  });
   $('#fDetail').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveFood(); } });
 }
 function saveFood() {
   const F = ui.food, place = F.place.trim(), detail = F.detail.trim();
   if (!place && !detail) { toast('Napiš, co jsi jedl', 'Stačí podnik nebo jídlo.', 'err'); $('#fDetail')?.focus(); return; }
   const k = ui.active, d = mutDay(k);
-  const fields = { category: F.cat, place, detail, name: detail ? (place ? `${place} | ${detail}` : detail) : place, emoji: F.emoji, stars: F.stars };
+  const fields = { category: F.cat, place, detail, name: detail ? (place ? `${place} | ${detail}` : detail) : place, emoji: F.emoji, emojiManual: !!F.manual, stars: F.stars };
   if (F.edit) {
     const f = d.food.find((x) => x.id === F.edit);
     if (f) Object.assign(f, fields, { edited: Date.now() });
@@ -777,7 +815,7 @@ function removeFood(k, id, quiet) {
 function startFoodEdit(id) {
   const f = foods(getDay(ui.active)).find((x) => x.id === id); if (!f) return;
   const s = foodSplit(f);
-  ui.food = { cat: f.category || 'Oběd', place: s.place, detail: s.detail, emoji: f.emoji || '🍳', stars: +f.stars || 5, edit: id, emojiOpen: false };
+  ui.food = { cat: f.category || 'Oběd', place: s.place, detail: s.detail, emoji: foodEmoji(f), placeEmoji: f.emoji || '🍳', manual: !!f.emojiManual, stars: +f.stars || 5, edit: id, emojiOpen: false };
   haptic(); render(); scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -794,7 +832,7 @@ function openHistory() {
       body += list.length ? '<div class="group">' + list.slice(0, 300).map((f) => {
         const head = ui.histSort === 'date' && f.date !== lastDate ? `<p class="dhead">${dayLabel(f.date, { weekday: 'long', day: 'numeric', month: 'long', year: f.date.slice(0, 4) === TODAY.slice(0, 4) ? undefined : 'numeric' })}</p>` : '';
         lastDate = f.date;
-        return `${head}<button type="button" class="row" data-go="${f.date}"><span class="row__e">${esc(f.emoji || '🍽️')}</span>
+        return `${head}<button type="button" class="row" data-go="${f.date}"><span class="row__e">${esc(foodEmoji(f))}</span>
           <span class="row__t"><small class="cat">${esc(f.category)}${ui.histSort !== 'date' ? ' · ' + dayLabel(f.date, { day: 'numeric', month: 'numeric', year: '2-digit' }) : ''}</small><b>${esc(f.detail || f.place)}</b>${f.detail && f.place ? `<small>${esc(f.place)}</small>` : ''}</span>
           ${starsRow(+f.stars || 0)}</button>`;
       }).join('') + '</div>' : '<p class="empty">Nic nenalezeno.</p>';
@@ -892,6 +930,9 @@ function openSettings() {
   const paint = () => {
     const notifOk = 'Notification' in window;
     $('#sheetBody').innerHTML = `
+    <h3 class="sec">${ic('eye')} Vzhled</h3>
+    <div class="seg" id="themeSeg">${[['dark', 'Tmavý'], ['light', 'Světlý'], ['auto', 'Podle telefonu']].map(([k, l]) => `<button type="button" data-th="${k}" class="${config.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+
     <h3 class="sec">${ic('drop')} Pitný režim</h3>
     <div class="card set">
       <div class="set__row"><span>Denní cíl</span><div class="stepper"><button type="button" class="ibtn sm" id="gMinus" aria-label="Méně">${ic('minus')}</button><b class="dot">${config.waterGoal}</b><button type="button" class="ibtn sm" id="gPlus" aria-label="Víc">${ic('plus')}</button></div></div>
@@ -934,6 +975,7 @@ function openSettings() {
     <p class="foot">verze ${VERSION} · jendovyapky</p>`;
 
     const stepGoal = (d) => { config.waterGoal = clamp(config.waterGoal + d, 500, 6000); haptic(); settingsChanged(); paint(); };
+    $$('[data-th]').forEach((b) => (b.onclick = () => { config.theme = b.dataset.th; haptic(); persist(); applyTheme(); paint(); }));
     $('#gMinus').onclick = () => stepGoal(-100);
     $('#gPlus').onclick = () => stepGoal(100);
     $$('.de').forEach((row) => {
@@ -1081,9 +1123,9 @@ const ACT = {
   dose: (b) => toggleDose(b.dataset.id, +b.dataset.i),
   editSupp: (b) => openSuppEditor(b.dataset.id),
   foodCat: (b) => { ui.food.cat = b.dataset.c; haptic(); render(); },
-  foodPlace: (b) => { ui.food.place = b.dataset.p; ui.food.emoji = b.dataset.e; haptic(); render(); $('#fDetail')?.focus(); },
+  foodPlace: (b) => { const F = ui.food; F.place = b.dataset.p; F.placeEmoji = b.dataset.e; if (!F.manual) F.emoji = guessEmoji(F.detail) || b.dataset.e; haptic(); render(); $('#fDetail')?.focus(); },
   foodEmoji: () => { ui.food.emojiOpen = !ui.food.emojiOpen; haptic(); render(); },
-  foodEmojiSet: (b) => { ui.food.emoji = b.dataset.e; ui.food.emojiOpen = false; haptic(); render(); },
+  foodEmojiSet: (b) => { ui.food.emoji = b.dataset.e; ui.food.manual = true; ui.food.emojiOpen = false; haptic(); render(); },
   foodStars: (b) => { ui.food.stars = +b.dataset.n; ui.popStar = ui.food.stars; haptic(); render(); },
   foodSave: saveFood,
   foodEdit: (b) => startFoodEdit(+b.dataset.id),
