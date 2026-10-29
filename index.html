@@ -13,8 +13,8 @@
 <script>try{var t=localStorage.getItem('trackerrr_theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<!-- „black“ (ne „black-translucent“): iOS 26 jinak nechá u appky z plochy dole pás (viz Qamera) -->
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<!-- „black-translucent“: appka sahá až pod výřez kamery (bez hrany). Pás, který iOS 26 nechává dole, kreslí pozadí <html> = stejná barva jako appka. -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trackerrr">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -26,6 +26,8 @@
 <body>
 <div class="tint" aria-hidden="true"></div>
 <div class="grain" aria-hidden="true"></div>
+<div class="edge edge--t" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="edge edge--b" aria-hidden="true"><i></i><i></i><i></i></div>
 
 <!-- úvod: kapka otevře oči a appka se vynoří -->
 <div class="boot" id="boot" aria-hidden="true">

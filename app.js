@@ -1,7 +1,7 @@
 'use strict';
 /* Trackerrr – pití, suplementy a jídlo. Bez frameworku, bez buildu (stejně jako ostatní jendovyapky). */
 
-const VERSION = '2.5';
+const VERSION = '2.6';
 // Klíče v localStorage zůstávají ze staré verze → data v telefonu se neztratí a stará verze by s nimi pořád uměla pracovat.
 const KS = 'trackerrr_state_v10', KC = 'trackerrr_config_v10';
 
@@ -213,32 +213,18 @@ function renderSyncBtn() {
 }
 
 /* ===== přepínání obrazovek ===== */
-// Přechod mezi záložkami podle směru v doku: stará obrazovka odjede, nová přijede z druhé strany a obsah naskočí postupně.
+// Přechod mezi záložkami podle směru v doku: nová obrazovka přijede z té strany a obsah naskočí postupně.
 const ORDER = ['home', 'water', 'supps', 'food', 'stats'];
-let leaving = null;
-function finishLeave() {
-  if (!leaving) return;
-  clearTimeout(leaving.t);
-  leaving.el.hidden = true; leaving.el.classList.remove('leave'); leaving.el.style.top = '';
-  leaving = null;
-}
 function setTab(t) {
   if (t === ui.tab) { scrollTo({ top: 0, behavior: 'smooth' }); return; }
-  finishLeave();
   const from = $('#view-' + ui.tab), v = $('#view-' + t);
   const dir = ORDER.indexOf(t) > ORDER.indexOf(ui.tab) ? 1 : -1;
   ui.tab = t;
   document.body.dataset.tab = t; // barevný nádech pozadí podle záložky
   if (t === 'home') ui.shownPct = null; // znovu dopočítat procenta
-  const y = scrollY;
+  // stará obrazovka zmizí hned – dvě přes sebe prolínané obrazovky dělaly na iPhonu „ghosting“
+  from.hidden = true;
   scrollTo({ top: 0 });
-  if (reduced()) from.hidden = true;
-  else {
-    from.style.top = (from.offsetTop - y) + 'px'; // zůstane tam, kde byl vidět
-    from.style.setProperty('--dir', dir);
-    from.classList.add('leave');
-    leaving = { el: from, t: setTimeout(finishLeave, 260) };
-  }
   v.hidden = false;
   v.style.setProperty('--dir', dir);
   v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
@@ -928,7 +914,7 @@ function openAllDays() {
 /* ===== NASTAVENÍ ===== */
 function openSettings() {
   const paint = () => {
-    const notifOk = 'Notification' in window;
+    const notifOk = pushOk();
     $('#sheetBody').innerHTML = `
     <h3 class="sec">${ic('eye')} Vzhled</h3>
     <div class="seg" id="themeSeg">${[['dark', 'Tmavý'], ['light', 'Světlý'], ['auto', 'Podle telefonu']].map(([k, l]) => `<button type="button" data-th="${k}" class="${config.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div>
@@ -947,8 +933,9 @@ function openSettings() {
 
     <h3 class="sec">${ic('bell')} Upozornění</h3>
     <div class="card set">
-      <div class="set__row"><span>Připomínat pití a suplementy<small>7:00–22:00, jen když je appka otevřená nebo na pozadí</small></span><button type="button" class="switch${config.notifEnabled ? ' on' : ''}" id="nToggle" ${notifOk ? '' : 'disabled'} aria-label="Upozornění"><i></i></button></div>
+      <div class="set__row"><span>Připomínat pití a suplementy<small>7:00–22:00, i když je appka zavřená</small></span><button type="button" class="switch${config.notifEnabled ? ' on' : ''}" id="nToggle" ${notifOk ? '' : 'disabled'} aria-label="Upozornění"><i></i></button></div>
       ${config.notifEnabled ? `<div class="seg">${[60, 120, 180].map((m) => `<button type="button" data-ni="${m}" class="${config.notifInterval === m ? 'on' : ''}">každé ${m / 60} h</button>`).join('')}</div>` : ''}
+      ${config.notifEnabled ? '<button type="button" class="btn btn--ghost sm" id="nTest">Poslat zkušební</button>' : ''}
       ${notifOk ? '' : '<p class="note">Na iPhonu fungují jen v appce přidané na plochu.</p>'}
     </div>
 
@@ -987,7 +974,8 @@ function openSettings() {
     });
     $('#dAdd') && ($('#dAdd').onclick = () => { config.drinks.push({ id: 'd_' + Date.now(), name: 'Nový', ml: 330, icon: 'bottle' }); settingsChanged(); paint(); });
     $('#nToggle').onclick = toggleNotifs.bind(null, paint);
-    $$('[data-ni]').forEach((b) => (b.onclick = () => { config.notifInterval = +b.dataset.ni; haptic(); commit({ sync: false }); paint(); }));
+    $$('[data-ni]').forEach((b) => (b.onclick = () => { config.notifInterval = +b.dataset.ni; haptic(); persist(); paint(); pushRegister().catch(() => {}); }));
+    $('#nTest') && ($('#nTest').onclick = async () => { try { const sub = await pushSub(false); await pushApi('/test', { endpoint: sub?.endpoint }); toast('Odesláno', 'Za pár vteřin by mělo přijít upozornění.', 'ok'); } catch { toast('Nepovedlo se', 'Zkus upozornění vypnout a zapnout.', 'err'); } });
     const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
     on('cloudOn', () => connectKey(newKey()));
     on('keyJoin', () => {
@@ -1020,12 +1008,25 @@ function openSettings() {
   };
   openSheet('Nastavení', paint);
 }
-function toggleNotifs(paint) {
-  if (config.notifEnabled) { config.notifEnabled = false; persist(); paint(); toast('Upozornění vypnutá'); return; }
-  Notification.requestPermission().then((p) => {
-    if (p === 'granted') { config.notifEnabled = true; persist(); paint(); toast('Upozornění zapnutá', 'Připomenu se, když budeš pozadu.', 'ok'); checkNotifs(); }
-    else toast('Nepovoleno', 'Povol upozornění pro Trackerrr v nastavení telefonu.', 'err');
-  });
+async function toggleNotifs(paint) {
+  if (config.notifEnabled) {
+    config.notifEnabled = false; persist(); paint();
+    try { const sub = await pushSub(false); if (sub) { await pushApi('/unsubscribe', { endpoint: sub.endpoint }); await sub.unsubscribe(); } } catch {}
+    toast('Upozornění vypnutá'); return;
+  }
+  if (!pushOk()) { toast('Tady to nejde', 'Na iPhonu přidej Trackerrr na plochu a otevři ho odtud.', 'err'); return; }
+  if (!config.cloudKey) {
+    if (!confirm('Upozornění posílá tvůj soukromý cloud (musí vidět, jestli jsi pozadu). Zapnout ho?')) return;
+    await connectKey(newKey());
+    if (!config.cloudKey || ui.sync !== 'ok') return;
+  }
+  if ((await Notification.requestPermission()) !== 'granted') { toast('Nepovoleno', 'Povol upozornění pro Trackerrr v nastavení telefonu.', 'err'); return; }
+  try {
+    await syncNow(); // server potřebuje aktuální data a seznam suplementů
+    await pushRegister();
+    config.notifEnabled = true; persist(); paint();
+    toast('Upozornění zapnutá', 'Chodí i při zavřené appce. Zkus „Poslat zkušební“.', 'ok');
+  } catch { toast('Nepovedlo se', 'Zkus to znovu za chvíli.', 'err'); }
 }
 function exportData() {
   const { cloudKey, ...cfg } = config; // klíč do zálohy nepatří (soubor se dá omylem někomu poslat)
@@ -1211,7 +1212,7 @@ async function syncNow(manual = false) {
   syncing = true; ui.sync = 'busy'; renderSyncBtn();
   if (manual) haptic();
   try {
-    if (!state._settings && config.settingsUpdated) state._settings = settingsSnapshot();
+    if (!state._settings) state._settings = settingsSnapshot(); // server podle toho posílá upozornění
     const remote = await cloud();
     state = merge(state, remote); DEL = new Set(state.deletedLogs); // spojit i s tím, co přibylo během požadavku
     applyRemoteSettings();
@@ -1246,26 +1247,27 @@ function keyFromLink() {
   if (confirm('Připojit tohle zařízení k tvému cloudu? Data z obou míst se spojí.')) connectKey(k);
 }
 
-/* ===== upozornění ===== */
-async function notify(title, body, tag) {
-  try {
-    const reg = await navigator.serviceWorker?.getRegistration();
-    if (reg) return await reg.showNotification(title, { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' });
-  } catch {}
-  try { new Notification(title, { body, tag }); } catch {}
+/* ===== upozornění: posílá je server (sync/worker.js) – chodí i při zavřené appce ===== */
+const PUSH = SYNC.replace(/\/data$/, '/push');
+const pushOk = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const b64uToBytes = (s) => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); };
+async function pushApi(path, body) {
+  const r = await fetch(PUSH + path, { method: 'POST', headers: { Authorization: 'Bearer ' + config.cloudKey, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
 }
-function checkNotifs() {
-  if (!config.notifEnabled || !('Notification' in window) || Notification.permission !== 'granted') return;
-  const h = new Date().getHours(); if (h >= 22 || h < 7) return;
-  const d = getDay(TODAY), every = config.notifInterval * 60000, nm = nowMins();
-  const due = (key) => Date.now() - (+localStorage.getItem('last_notif_' + key) || 0) > every;
-  const mark = (key) => localStorage.setItem('last_notif_' + key, String(Date.now()));
-  const behind = paceTarget() - dayWater(d);
-  if (behind >= 250 && due('water')) { notify('Kde máš vodu? 💧', `Jsi pozadu o ${fmtMl(behind)}. Napij se.`, 'water'); mark('water'); }
-  for (const s of config.customSuplementsList) {
-    const expected = s.customTimes.filter((t) => (toMins(t) ?? 9999) + 15 <= nm).length;
-    if (doses(d, s.id).length < expected && due(s.id)) { notify(`Čas na ${s.name} 💊`, 'Ještě sis nevzal dávku.', 'supp-' + s.id); mark(s.id); }
+async function pushSub(create) {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub && create) {
+    const { key } = await (await fetch(PUSH + '/vapid')).json();
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
   }
+  return sub;
+}
+async function pushRegister() {
+  const sub = await pushSub(true);
+  await pushApi('/subscribe', { sub: sub.toJSON(), interval: config.notifInterval, tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
 }
 
 /* ===== nový den, návrat do appky ===== */
@@ -1277,7 +1279,6 @@ function tick() {
     if (wasToday) { ui.active = TODAY; ui.weekStart = mondayOf(TODAY); ui.shownPct = null; ui.food = null; }
     render();
   } else renderBattery();
-  checkNotifs();
 }
 setInterval(tick, 30000);
 document.addEventListener('visibilitychange', () => {
@@ -1303,6 +1304,6 @@ moveLamp(true);
   setTimeout(done, 1650);
 })();
 keyFromLink();
-if (config.cloudKey) syncNow(); else checkNotifs();
+if (config.cloudKey) syncNow();
 // service worker jen na webu (lokálně bez cache, ať je vidět každá změna)
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

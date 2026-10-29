@@ -1,6 +1,7 @@
 // Trackerrr sync: soukromá data jednoho člověka. Přístup jen se 120bitovým klíčem v hlavičce Authorization
 // (nikdy v adrese → nezůstane v logech). Server klíč nezná, data hledá podle jeho SHA-256 otisku.
 // Nejde vypsat ostatní – každý klíč má vlastní Durable Object.
+// Navíc upozornění (Web Push): každých 15 min se zkontroluje, jestli nejsi pozadu s pitím / suplementy.
 import { DurableObject } from 'cloudflare:workers';
 
 const KEY = /^[a-km-z2-9]{24}$/; // stejná abeceda jako v app.js (bez l, 0, 1)
@@ -16,30 +17,81 @@ function cors(req) {
   return { 'Access-Control-Allow-Origin': o, 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Max-Age': '86400', Vary: 'Origin' };
 }
 const json = (data, status, h) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...h } });
+const registry = (env) => env.REGISTRY.get(env.REGISTRY.idFromName('registry'));
 
 export default {
   async fetch(req, env) {
     const h = cors(req);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
-    const url = new URL(req.url);
-    if (url.pathname !== '/data') return new Response('Trackerrr', { headers: h });
+    const url = new URL(req.url), path = url.pathname;
+    if (path === '/push/vapid') return json({ key: await registry(env).vapidPublic() }, 200, h);
+    if (path !== '/data' && !path.startsWith('/push/')) return new Response('Trackerrr', { headers: h });
     const key = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
     if (!KEY.test(key)) return json({ error: 'key' }, 401, h);
     const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('trackerrr:' + key)))].map((b) => b.toString(16).padStart(2, '0')).join('');
     const vault = env.VAULT.get(env.VAULT.idFromName(hash));
-    if (req.method === 'GET') return json(await vault.read(), 200, h);
-    if (req.method === 'DELETE') { await vault.wipe(); return json({ ok: true }, 200, h); }
-    if (req.method === 'POST') {
-      if (+(req.headers.get('Content-Length') || 0) > MAX_BODY) return json({ error: 'size' }, 413, h);
-      const text = await req.text();
-      if (text.length > MAX_BODY) return json({ error: 'size' }, 413, h);
-      let body; try { body = JSON.parse(text); } catch { return json({ error: 'json' }, 400, h); }
-      if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'json' }, 400, h);
-      return json(await vault.sync(body), 200, h);
+    if (path === '/data' && req.method === 'GET') return json(await vault.read(), 200, h);
+    if (path === '/data' && req.method === 'DELETE') { await vault.wipe(); await registry(env).remove(hash); return json({ ok: true }, 200, h); }
+    if (req.method !== 'POST') return json({ error: 'method' }, 405, h);
+    if (+(req.headers.get('Content-Length') || 0) > MAX_BODY) return json({ error: 'size' }, 413, h);
+    const text = await req.text();
+    if (text.length > MAX_BODY) return json({ error: 'size' }, 413, h);
+    let body; try { body = JSON.parse(text); } catch { return json({ error: 'json' }, 400, h); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'json' }, 400, h);
+    if (path === '/data') return json(await vault.sync(body), 200, h);
+
+    // ---- upozornění ----
+    const sub = body.sub;
+    const okSub = sub && typeof sub.endpoint === 'string' && /^https:\/\//.test(sub.endpoint) && sub.keys?.p256dh && sub.keys?.auth;
+    if (path === '/push/subscribe') {
+      if (!okSub) return json({ error: 'sub' }, 400, h);
+      await vault.addSub({ endpoint: sub.endpoint, keys: { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } },
+        { interval: [60, 120, 180].includes(+body.interval) ? +body.interval : 120, tz: typeof body.tz === 'string' && body.tz.length < 40 ? body.tz : 'Europe/Prague' });
+      await registry(env).add(hash);
+      return json({ ok: true }, 200, h);
     }
-    return json({ error: 'method' }, 405, h);
+    if (path === '/push/unsubscribe') {
+      const left = await vault.removeSub(String(body.endpoint || sub?.endpoint || ''));
+      if (!left) await registry(env).remove(hash);
+      return json({ ok: true }, 200, h);
+    }
+    if (path === '/push/test') {
+      const subs = await vault.subs(), s = subs.find((x) => x.endpoint === (body.endpoint || sub?.endpoint)) || subs[0];
+      if (!s) return json({ error: 'nosub' }, 404, h);
+      const r = await sendPush(env, s, { title: 'Trackerrr 💧', body: 'Upozornění fungujou. Připomenu se, když budeš pozadu.', tag: 'test' });
+      return json(r, 200, h);
+    }
+    return json({ error: 'path' }, 404, h);
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runChecks(env));
   },
 };
+
+/* ---------------- Kontrola všech přihlášených ---------------- */
+async function runChecks(env) {
+  const reg = registry(env);
+  for (const hash of await reg.list()) {
+    try {
+      const vault = env.VAULT.get(env.VAULT.idFromName(hash));
+      const { subs, msgs } = await vault.check(Date.now());
+      for (const msg of msgs) for (const s of subs) {
+        const r = await sendPush(env, s, msg);
+        if (r.status === 404 || r.status === 410) { if (!(await vault.removeSub(s.endpoint))) await reg.remove(hash); } // telefon se odhlásil
+      }
+    } catch (e) { console.log('check failed', e?.message); }
+  }
+}
+
+// místní datum a minuty dne v časovém pásmu telefonu
+function localNow(now, tz) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(new Date(now)).map((x) => [x.type, x.value]));
+  return { day: `${p.year}-${p.month}-${p.day}`, mins: +p.hour * 60 + +p.minute };
+}
+const toMins = (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t || ''); return m ? +m[1] * 60 + +m[2] : null; };
+const fmtMl = (ml) => (ml >= 1000 ? `${(Math.round(ml / 100) / 10).toString().replace('.', ',')} l` : `${ml} ml`);
 
 // Slučování – stejná pravidla jako merge() v app.js (sjednocení podle id, náhrobky v deletedLogs, upravené jídlo podle `edited`).
 function mergeDay(A = {}, B = {}, del) {
@@ -82,7 +134,7 @@ export class Vault extends DurableObject {
       cur[k] = m;
     }
     const si = inc._settings, sc = cur._settings;
-    if (si && typeof si === 'object' && (si.updatedAt || 0) > (sc?.updatedAt || 0)) cur._settings = si;
+    if (si && typeof si === 'object' && (!sc || (si.updatedAt || 0) > (sc.updatedAt || 0))) cur._settings = si;
     cur.deletedLogs = [...del];
     cur.lastUpdated = Math.max(cur.lastUpdated || 0, +inc.lastUpdated || 0);
     puts.meta = { lastUpdated: cur.lastUpdated, deletedLogs: cur.deletedLogs, _settings: cur._settings };
@@ -92,4 +144,107 @@ export class Vault extends DurableObject {
     return cur;
   }
   async wipe() { await this.ctx.storage.deleteAll(); }
+
+  // ---- upozornění ----
+  async subs() { return (await this.ctx.storage.get('push')) || []; }
+  async addSub(sub, prefs) {
+    const list = (await this.subs()).filter((x) => x.endpoint !== sub.endpoint);
+    list.push({ ...sub, ...prefs });
+    await this.ctx.storage.put('push', list.slice(-5));
+  }
+  async removeSub(endpoint) {
+    const list = (await this.subs()).filter((x) => x.endpoint !== endpoint);
+    await this.ctx.storage.put('push', list);
+    return list.length;
+  }
+  // Co poslat teď: pití podle tempa (7:00 → 0 %, 21:00 → 100 % cíle), suplementy po naplánovaném čase. Noční klid 22–7.
+  async check(now) {
+    const subs = await this.subs();
+    if (!subs.length) return { subs, msgs: [] };
+    const tz = subs[0].tz || 'Europe/Prague', every = Math.min(...subs.map((s) => s.interval || 120)) * 60000;
+    const { day, mins } = localNow(now, tz);
+    if (mins < 420 || mins >= 1320) return { subs, msgs: [] };
+    const s = this.ctx.storage, meta = (await s.get('meta')) || {}, d = (await s.get('d:' + day)) || {};
+    const del = new Set(meta.deletedLogs || []), set = meta._settings || {};
+    const last = (await s.get('notified')) || {}, msgs = [];
+    const due = (k) => now - (last[k] || 0) > every;
+    const goal = +set.waterGoal || 2100;
+    const water = sum((d.waterLogs || []).filter((l) => !del.has(l.id)), (l) => parseInt(l.amount));
+    const behind = Math.round(goal * Math.max(0, Math.min(1, (mins - 420) / 840))) - water;
+    if (behind >= 250 && due('water')) { msgs.push({ title: 'Kde máš vodu? 💧', body: `Jsi pozadu o ${fmtMl(behind)}. Napij se.`, tag: 'water' }); last.water = now; }
+    const late = [];
+    for (const sp of Array.isArray(set.supps) ? set.supps : []) {
+      const times = Array.isArray(sp.customTimes) ? sp.customTimes : [];
+      const expected = times.filter((t) => (toMins(t) ?? 9999) + 15 <= mins).length;
+      const taken = ((d.vitamins || {})[sp.id] || []).filter((t) => !del.has(t)).length;
+      if (taken < expected && due('s:' + sp.id)) { late.push(sp.name); last['s:' + sp.id] = now; }
+    }
+    if (late.length) msgs.push({ title: late.length === 1 ? `Čas na ${late[0]} 💊` : 'Čas na suplementy 💊', body: late.length === 1 ? 'Ještě sis nevzal dávku.' : `Ještě sis nevzal: ${late.join(', ')}.`, tag: 'supps' });
+    if (msgs.length) await s.put('notified', last);
+    return { subs, msgs };
+  }
+}
+
+// Seznam klíčů s přihlášenými telefony (jen otisky) + VAPID klíče serveru – NEMAZAT, jinak přestanou chodit upozornění.
+export class Registry extends DurableObject {
+  async add(hash) { await this.ctx.storage.put('v:' + hash, 1); }
+  async remove(hash) { await this.ctx.storage.delete('v:' + hash); }
+  async list() { return [...(await this.ctx.storage.list({ prefix: 'v:' })).keys()].map((k) => k.slice(2)); }
+  async vapid() {
+    let v = await this.ctx.storage.get('vapid');
+    if (!v) {
+      const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      v = { jwk: await crypto.subtle.exportKey('jwk', kp.privateKey), publicKey: b64u(await crypto.subtle.exportKey('raw', kp.publicKey)) };
+      await this.ctx.storage.put('vapid', v);
+    }
+    return v;
+  }
+  async vapidPublic() { return (await this.vapid()).publicKey; }
+}
+
+/* ---------------- Web Push (VAPID + aes128gcm) – stejně jako mraq-push ---------------- */
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)); };
+const concat = (...arrs) => { const n = arrs.reduce((a, x) => a + x.length, 0), o = new Uint8Array(n); let i = 0; for (const a of arrs) { o.set(a, i); i += a.length; } return o; };
+const enc = (s) => new TextEncoder().encode(s);
+
+let vapidCache = null;
+async function vapidKeys(env) {
+  if (vapidCache) return vapidCache;
+  const v = await registry(env).vapid();
+  vapidCache = { privateKey: await crypto.subtle.importKey('jwk', v.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']), publicKey: v.publicKey };
+  return vapidCache;
+}
+async function vapidAuth(env, endpoint) {
+  const { privateKey, publicKey } = await vapidKeys(env);
+  const header = b64u(enc(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  const claims = b64u(enc(JSON.stringify({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: env.CONTACT || 'mailto:jendovyapky@gmail.com' })));
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, enc(`${header}.${claims}`));
+  return `vapid t=${header}.${claims}.${b64u(sig)}, k=${publicKey}`;
+}
+async function hkdf(salt, ikm, info, len) {
+  const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, len * 8));
+}
+async function encryptPayload(sub, payload) {
+  const uaPublic = unb64u(sub.keys.p256dh), authSecret = unb64u(sub.keys.auth);
+  const as = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const asPublic = new Uint8Array(await crypto.subtle.exportKey('raw', as.publicKey));
+  const uaKey = await crypto.subtle.importKey('raw', uaPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, as.privateKey, 256));
+  const ikm = await hkdf(authSecret, shared, concat(enc('WebPush: info\0'), uaPublic, asPublic), 32);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await hkdf(salt, ikm, enc('Content-Encoding: aes128gcm\0'), 16);
+  const nonce = await hkdf(salt, ikm, enc('Content-Encoding: nonce\0'), 12);
+  const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key, concat(enc(payload), new Uint8Array([2]))));
+  return concat(salt, new Uint8Array([0, 0, 16, 0]), new Uint8Array([asPublic.length]), asPublic, ct);
+}
+async function sendPush(env, sub, msg) {
+  const r = await fetch(sub.endpoint, {
+    method: 'POST',
+    headers: { Authorization: await vapidAuth(env, sub.endpoint), 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', TTL: '1800', Urgency: 'normal' },
+    body: await encryptPayload(sub, JSON.stringify({ ...msg, url: (env.APP_URL || 'https://tracker.jendovyapky.eu') + '/' })),
+  });
+  return { ok: r.ok, status: r.status };
 }

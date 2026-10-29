@@ -11,7 +11,8 @@
 ## Soubory
 - `index.html` – kostra (hlavička, 5 obrazovek, dok, toast, vysouvací okno)
 - `app.js` – veškerá logika bez frameworku. Obrazovky se kreslí funkcemi `render*()`, kliky jdou přes `data-act` → objekt `ACT`.
-- `style.css`, `sw.js` (po větší změně zvýšit `VERSION`), `manifest.webmanifest`, `icons/`
+- `style.css`, `sw.js` (po větší změně zvýšit `VERSION`; přijímá i push), `manifest.webmanifest`, `icons/`
+- Pohyb: žádné prolínání dvou obrazovek přes sebe a žádný animovaný `blur` (na iPhonu dělal „ghosting“) – jen transform + opacity. Okraje u lišt = postupné rozmazání (`.edge`). Stavový řádek `black-translucent` (appka sahá pod výřez), při změně meta tagů appku smazat z plochy a přidat znovu.
 
 ## Data – pozor, ať se neztratí
 - localStorage klíče **zůstávají ze staré verze**: `trackerrr_state_v10` (dny) a `trackerrr_config_v10` (nastavení). Formát je nadmnožina starého
@@ -23,7 +24,9 @@
   POST = server spojí a vrátí všechno, GET = přečíst, DELETE = smazat. CORS jen pro tracker.jendovyapky.eu, trackerrr.jendovyapky.workers.dev, *.pages.dev a localhost. `mergeDay()` ve workeru musí zůstat stejný jako `merge()` v app.js.
   Další zařízení se připojí odkazem `#klic=…` (fragment se na server neposílá) nebo vepsáním klíče. Klíč se nedává do exportu.
 - Starý Google Apps Script cloud se už nepoužívá (adresa byla ve veřejném repu a vracela data všech místností). Data se nepřenášela – Honza začal od nuly (10/2026).
-- Upozornění chodí jen při otevřené / uspané appce (žádný push server).
+- **Upozornění (Web Push)** posílá stejný Worker `trackerrr-sync`: cron každých 15 min (`runChecks` → `Vault.check`), noční klid 22–7, pití podle tempa (7:00 → 0 %, 21:00 → 100 % cíle, pozadu ≥ 250 ml), suplementy 15 min po naplánovaném čase, opakování po `interval` (1/2/3 h). Potřebuje zapnutý cloud a `_settings` v datech (cíl, suplementy).
+  Telefon se přihlásí `/push/subscribe` (Authorization = klíč cloudu), VAPID klíče a seznam otisků s telefony drží Durable Object `Registry` – **nemazat**, jinak přestanou chodit upozornění. VAPID/aes128gcm kód je převzatý z `mraq-push` (repo pocasi).
+  Na iPhonu jen v appce přidané na plochu (iOS 16.4+).
 
 ## Pravidla
 - Nikdy nesahat na nic, co souvisí se studiem (studiodepo.cz, DEPO). Platby, hesla a API klíče zadává Honza sám.

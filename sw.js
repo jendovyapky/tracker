@@ -1,6 +1,6 @@
 // Trackerrr – service worker: vlastní soubory stale-while-revalidate (start hned z cache, i bez signálu), fonty cache-first.
 // Po větší změně zvýšit VERSION, ať se telefonům stáhne nová verze.
-const VERSION = 'trackerrr-v2.5';
+const VERSION = 'trackerrr-v2.6';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/logo.png'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
@@ -20,6 +20,14 @@ self.addEventListener('fetch', (e) => {
     const net = fetch(e.request).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; }).catch(() => hit);
     return hit || net;
   })));
+});
+// upozornění ze serveru (sync/worker.js)
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data?.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Trackerrr', {
+    body: d.body || '', tag: d.tag || 'trackerrr', renotify: true, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: d.url || './' },
+  }));
 });
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();

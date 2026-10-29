@@ -1,11 +1,13 @@
 {
-  // Trackerrr – soukromý cloud. Každý klíč = jeden Durable Object (SQLite), uložený pod SHA-256 otiskem klíče.
-  // Nasazení: cd sync && npx wrangler deploy
+  // Trackerrr – soukromý cloud + upozornění. Každý klíč = jeden Durable Object (SQLite), uložený pod SHA-256 otiskem klíče.
+  // Registry = seznam otisků s přihlášenými telefony a VAPID klíče (NEMAZAT). Nasazení: cd sync && npx wrangler deploy
   "name": "trackerrr-sync",
   "main": "worker.js",
   "compatibility_date": "2026-10-01",
-  "durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }],
+  "durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "Vault" }, { "name": "REGISTRY", "class_name": "Registry" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Vault"] }, { "tag": "v2", "new_sqlite_classes": ["Registry"] }],
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "vars": { "APP_URL": "https://tracker.jendovyapky.eu", "CONTACT": "mailto:jendovyapky@gmail.com" },
   "workers_dev": true,
   "observability": { "enabled": false }
 }
