@@ -41,20 +41,14 @@ input { caret-color: var(--accent); }
 .grain { position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .07; mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
 
-/* ===== úvod: kapka mrkne, naskočí logo, celé se to rozplyne do appky ===== */
+/* ===== úvod: logo Trackerrr se vynoří a rozplyne do appky ===== */
 .boot { position: fixed; inset: 0; z-index: 400; background: var(--bg); display: grid; place-items: center; transition: opacity .45s var(--ease-out); }
 .boot.out { opacity: 0; pointer-events: none; }
 .boot__in { display: flex; flex-direction: column; align-items: center; transition: transform .5s var(--ease-out), filter .5s var(--ease-out); }
 .boot.out .boot__in { transform: scale(1.6); filter: blur(12px); }
-.boot__drop { width: 92px; height: 92px; border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%; display: flex; gap: 14px; align-items: center; justify-content: center;
-  background: radial-gradient(circle at 35% 30%, #9fe0ff, var(--water) 40%, var(--water2) 100%); box-shadow: 0 18px 50px -10px rgba(47,107,255,.6);
-  animation: dropIn .6s var(--ease-out) both; }
-.boot__eye { width: 13px; height: 17px; border-radius: 6px; background: radial-gradient(circle, #f1fbff 1.3px, transparent 1.6px) 0 0 / 4.2px 4.2px; animation: blink .9s .4s both; }
-@keyframes dropIn { from { transform: scale(.6) translateY(24px); opacity: 0; filter: blur(8px); } }
-@keyframes blink { 0%, 40%, 100% { transform: scaleY(1); } 55% { transform: scaleY(.1); } }
-/* logo.png má kolem textu hodně průhledného okraje → zvětšit a stáhnout k sobě */
-.boot__logo { width: 300px; height: 300px; margin: -105px 0 -110px; animation: logoIn .55s .3s var(--ease-out) both; }
-@keyframes logoIn { from { opacity: 0; transform: translateY(10px); filter: blur(6px); } }
+/* logo.png má kolem textu hodně průhledného okraje → proto tak velké */
+.boot__logo { width: 320px; height: 320px; animation: logoIn .6s .05s var(--ease-out) both; }
+@keyframes logoIn { from { opacity: 0; transform: scale(.94); filter: blur(8px); } }
 body:not(.ready) .wrap, body:not(.ready) .top, body:not(.ready) .dock { opacity: 0; }
 .ready .top, .ready .wrap, .ready .dock { animation: appIn .5s var(--ease-out) both; }
 @keyframes appIn { from { opacity: 0; transform: scale(.985); filter: blur(4px); } }

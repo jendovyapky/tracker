@@ -1,7 +1,7 @@
 'use strict';
 /* Trackerrr – pití, suplementy a jídlo. Bez frameworku, bez buildu (stejně jako ostatní jendovyapky). */
 
-const VERSION = '2.2';
+const VERSION = '2.3';
 // Klíče v localStorage zůstávají ze staré verze → data v telefonu se neztratí a stará verze by s nimi pořád uměla pracovat.
 const KS = 'trackerrr_state_v10', KC = 'trackerrr_config_v10';
 
