@@ -1,7 +1,7 @@
 'use strict';
 /* Trackerrr – pití, suplementy a jídlo. Bez frameworku, bez buildu (stejně jako ostatní jendovyapky). */
 
-const VERSION = '2.0';
+const VERSION = '2.1';
 const API = 'https://script.google.com/macros/s/AKfycbzqRrJO7skZKFusk_YjWmwHSaSs2Nf_MO0dBqZBr4_Qpqt26HnZIiWBk4xVdsfLYKmu/exec';
 // Klíče v localStorage zůstávají ze staré verze → data v telefonu se neztratí a stará verze by s nimi pořád uměla pracovat.
 const KS = 'trackerrr_state_v10', KC = 'trackerrr_config_v10';
@@ -62,7 +62,9 @@ const ICONS = {
   glass: '<path d="M5 3h14l-1.6 16.2a2 2 0 0 1-2 1.8H8.6a2 2 0 0 1-2-1.8Z"/><path d="M5.6 9h12.8"/>',
   bottle: '<path d="M10 2h4v3l1.5 2.5a3 3 0 0 1 .5 1.7V20a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V9.2a3 3 0 0 1 .5-1.7L10 5z"/><path d="M8 12h8"/>',
   coffee: '<path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><path d="M7 2v2M11 2v2"/>',
+  star: '<path d="M12 2.8l2.84 5.76 6.36.92-4.6 4.49 1.08 6.33L12 17.32 6.32 20.3l1.08-6.33-4.6-4.49 6.36-.92z"/>',
 };
+const starsRow = (n) => `<span class="srow" aria-label="${n} z 5">${[1, 2, 3, 4, 5].map((i) => ic('star', i <= n ? 'on' : '')).join('')}</span>`;
 const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 const DRINK_ICONS = ['glass', 'cup', 'bottle', 'can', 'coffee', 'drop'];
 
@@ -211,6 +213,7 @@ function renderSyncBtn() {
 function setTab(t) {
   if (t === ui.tab) { scrollTo({ top: 0, behavior: 'smooth' }); return; }
   ui.tab = t;
+  document.body.dataset.tab = t; // barevný nádech pozadí podle záložky
   $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + t; });
   const v = $('#view-' + t);
   v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
@@ -290,42 +293,44 @@ function renderHome() {
     const diff = w - paceTarget();
     pace = Math.abs(diff) < 100 ? 'Držíš tempo' : diff > 0 ? `Napřed o ${fmtMl(diff)}` : `Pozadu o ${fmtMl(-diff)}`;
   } else if (w >= g) pace = pct >= 130 ? 'Splněno s rezervou' : 'Cíl splněn';
+  const last = fs[fs.length - 1], lastS = last && foodSplit(last);
   const v = $('#view-home');
   v.innerHTML = `
-  <div class="card week" id="weekCard">
+  <div class="week" id="weekCard">
     <div class="week__head">
-      <button type="button" class="streak" data-act="streak">${ic('flame')}<b>${cur}</b></button>
-      <div class="week__nav"><button type="button" class="ibtn sm" data-act="week" data-d="-1" aria-label="Předchozí týden">${ic('chevL')}</button>
+      <button type="button" class="streak" data-act="streak" aria-label="Série dní">${ic('flame')}<b>${cur}</b><span>${plural(cur, 'den', 'dny', 'dní')}</span></button>
+      <div class="week__nav"><button type="button" class="ibtn ghost" data-act="week" data-d="-1" aria-label="Předchozí týden">${ic('chevL')}</button>
       <span>${weekLabel()}</span>
-      <button type="button" class="ibtn sm" data-act="week" data-d="1" aria-label="Další týden" ${ui.weekStart >= mondayOf(TODAY) ? 'disabled' : ''}>${ic('chevR')}</button></div>
+      <button type="button" class="ibtn ghost" data-act="week" data-d="1" aria-label="Další týden" ${ui.weekStart >= mondayOf(TODAY) ? 'disabled' : ''}>${ic('chevR')}</button></div>
     </div>
     <div class="week__row">${weekRow()}</div>
   </div>
 
   <div class="orbwrap">
-    <button type="button" class="orb" data-act="tab" data-tab="water" aria-label="Pití">
+    <button type="button" class="orb" data-act="tab" data-tab="water" aria-label="Pití: ${pct} %">
       <span class="orb__liquid" id="orbLiquid"><i></i><i></i></span>
       <canvas class="orb__eyes" id="eyes" width="96" height="48"></canvas>
       <b class="orb__pct" id="orbPct">0%</b>
     </button>
-    <p class="orb__sub"><b>${fmtMl(w)}</b> z ${fmtMl(g)}${pace ? ` · <span class="${pace.startsWith('Pozadu') ? 'warn' : 'okc'}">${pace}</span>` : ''}</p>
+    <p class="orb__sub"><span class="num">${fmtMl(w)}</span> z ${fmtMl(g)}</p>
+    ${pace ? `<p class="pace ${pace.startsWith('Pozadu') ? 'warn' : 'okc'}">${pace}</p>` : ''}
   </div>
 
-  <div class="quick">${config.drinks.map((dr) => `<button type="button" class="qd" data-act="drink" data-id="${esc(dr.id)}">${ic(dr.icon)}<span>${esc(dr.name)}</span><small>+${dr.ml}</small></button>`).join('')}</div>
+  <div class="quick">${config.drinks.map((dr) => `<button type="button" class="qd" data-act="drink" data-id="${esc(dr.id)}" aria-label="${esc(dr.name)} ${dr.ml} ml">${ic(dr.icon)}<span>${esc(dr.name)}</span><small class="num">+${dr.ml}</small></button>`).join('')}</div>
 
-  <div class="tiles">
-    <div class="card tile tile--supp">
-      <button type="button" class="tile__head" data-act="tab" data-tab="supps">${ic('pill')}<span>Suplementy</span><b>${ss.done}/${ss.target}</b></button>
-      <div class="bar"><i style="width:${ss.target ? (ss.done / ss.target) * 100 : 0}%"></i></div>
-      ${nd ? `<div class="next${nd.late ? ' late' : ''}"><span><b>${esc(nd.s.name)}</b> ${nd.s.frequency > 1 ? `<i>${nd.i + 1}/${nd.s.frequency}</i>` : ''}<small>${nd.late ? 'měl jsi v ' : ''}${esc(nd.t)}</small></span>
-        <button type="button" class="take" data-act="dose" data-id="${esc(nd.s.id)}" data-i="${nd.i}">${ic('check')}Vzít</button></div>`
-        : `<p class="done">${ss.target ? `${ic('check')} Všechno vzato` : 'Zatím žádné suplementy'}</p>`}
+  <div class="group">
+    <div class="grow grow--supp">
+      <button type="button" class="grow__main" data-act="tab" data-tab="supps">
+        <span class="gi">${ic('pill')}</span>
+        <span class="grow__t"><b>Suplementy</b><small class="${nd?.late ? 'warn' : ''}">${nd ? `${esc(nd.s.name)} · ${esc(nd.t)}` : ss.target ? 'Všechno vzato' : 'Zatím žádné'}</small></span>
+        <span class="frac num">${ss.done}<i>/${ss.target}</i></span>
+      </button>
+      ${nd ? `<button type="button" class="take" data-act="dose" data-id="${esc(nd.s.id)}" data-i="${nd.i}">Vzít</button>` : ''}
     </div>
-    <button type="button" class="card tile tile--food" data-act="tab" data-tab="food">
-      <span class="tile__head">${ic('food')}<span>Jídlo</span><b>${fs.length}</b></span>
-      <span class="meals">${['Snídaně', 'Oběd', 'Večeře'].map((c) => `<span class="${has(c) ? 'on' : ''}"><i></i>${c}</span>`).join('')}</span>
-      ${snacks ? `<small class="snacks">+ ${snacks} ${plural(snacks, 'svačina', 'svačiny', 'svačin')}</small>` : ''}
-      ${fs.length ? `<small class="lastmeal">${esc(fs[fs.length - 1].emoji || '')} ${esc(foodSplit(fs[fs.length - 1]).detail || foodSplit(fs[fs.length - 1]).place)}</small>` : ''}
+    <button type="button" class="grow grow--food" data-act="tab" data-tab="food">
+      <span class="gi">${ic('food')}</span>
+      <span class="grow__t"><b>Jídlo</b><small>${last ? `${esc(last.emoji || '')} ${esc(lastS.detail || lastS.place)}` : 'Nic zapsáno'}${snacks ? ` · +${snacks} ${plural(snacks, 'svačina', 'svačiny', 'svačin')}` : ''}</small></span>
+      <span class="meals" aria-label="Snídaně, oběd, večeře">${['Snídaně', 'Oběd', 'Večeře'].map((c) => `<i class="${has(c) ? 'on' : ''}" title="${c}"></i>`).join('')}</span>
     </button>
   </div>`;
   swipe($('#weekCard'), (dir) => moveWeek(dir));
@@ -428,31 +433,31 @@ function renderWater() {
   const k = ui.active, d = getDay(k), w = dayWater(d), g = goal(), logs = waterLogs(d);
   const v = $('#view-water');
   v.innerHTML = `
-  <div class="card hero hero--water">
-    <div class="hero__num"><b class="dot">${w}</b><span>/ ${g} ml</span></div>
+  <div class="head">
+    <div class="head__num"><b class="dot">${w}</b><span class="num">/ ${g} ml</span></div>
     <div class="bar bar--lg"><i style="width:${clamp((w / g) * 100, 0, 100)}%"></i>${k === TODAY && w < g ? `<em style="left:${(paceTarget() / g) * 100}%" title="Kolik bys měl mít teď"></em>` : ''}</div>
-    <p class="hero__hint">${w >= g ? `Splněno${w > g ? ` (+${fmtMl(w - g)})` : ''} 🎉` : `Zbývá ${fmtMl(g - w)}${k === TODAY ? ` · teď bys měl mít ~${fmtMl(paceTarget())}` : ''}`}</p>
+    <p class="head__hint">${w >= g ? `Splněno${w > g ? `, o ${fmtMl(w - g)} navíc` : ''}` : `Zbývá ${fmtMl(g - w)}${k === TODAY ? `. Touhle dobou bys měl mít ${fmtMl(paceTarget())}.` : ''}`}</p>
   </div>
 
   <div class="drinks">
-    ${config.drinks.map((dr) => `<button type="button" class="drink" data-act="drink" data-id="${esc(dr.id)}">${ic(dr.icon)}<b>${esc(dr.name)}</b><small>${dr.ml} ml</small></button>`).join('')}
+    ${config.drinks.map((dr) => `<button type="button" class="drink" data-act="drink" data-id="${esc(dr.id)}">${ic(dr.icon)}<b>${esc(dr.name)}</b><small class="num">${dr.ml} ml</small></button>`).join('')}
     <button type="button" class="drink drink--custom${ui.customOpen ? ' on' : ''}" data-act="customToggle">${ic('plus')}<b>Vlastní</b><small>vybrat objem</small></button>
   </div>
 
   <div class="card custom" ${ui.customOpen ? '' : 'hidden'}>
-    <div class="custom__top"><span class="lbl">Množství</span><b class="dot" id="customVal">${ui.customMl} ml</b></div>
+    <div class="custom__top"><span>Vlastní množství</span><b class="dot" id="customVal">${ui.customMl} ml</b></div>
     <input type="range" class="range" id="customRange" min="10" max="2000" step="10" value="${ui.customMl}" style="--p:${(ui.customMl - 10) / 19.9}%">
     <div class="custom__presets">${[100, 200, 330, 750, 1000].map((m) => `<button type="button" data-act="customSet" data-ml="${m}">${m}</button>`).join('')}</div>
     <button type="button" class="btn btn--water" data-act="customAdd">Přidat ${ui.customMl} ml</button>
   </div>
 
-  <h3 class="sec">Záznamy <span>${logs.length}</span></h3>
-  <div class="list">${logs.length ? logs.slice().reverse().map((l) => `
+  <h3 class="sec">Vypito <span class="num">${logs.length}×</span></h3>
+  <div class="group">${logs.length ? logs.slice().reverse().map((l) => `
     <div class="row">
-      <span class="row__i water">${ic(drinkIcon(l.type))}</span>
-      <span class="row__t"><b>${esc(l.type)}</b><small>${esc(l.time || hm(l.id))}</small></span>
-      <b class="row__v">${l.amount} ml</b>
-      <button type="button" class="ibtn sm ghost" data-act="rmWater" data-id="${l.id}" aria-label="Smazat">${ic('x')}</button>
+      <span class="gi">${ic(drinkIcon(l.type))}</span>
+      <span class="row__t"><b>${esc(l.type)}</b><small class="num">${esc(l.time || hm(l.id))}</small></span>
+      <b class="row__v num">${l.amount} ml</b>
+      <button type="button" class="ibtn ghost" data-act="rmWater" data-id="${l.id}" aria-label="Smazat ${esc(l.type)}">${ic('x')}</button>
     </div>`).join('') : '<p class="empty">Zatím nic. Ťukni na pití nahoře.</p>'}</div>`;
   const r = $('#customRange');
   if (r) r.addEventListener('input', () => {
@@ -486,18 +491,18 @@ function renderSupps() {
   const k = ui.active, d = getDay(k), ss = suppStats(d), nm = nowMins();
   const v = $('#view-supps');
   v.innerHTML = `
-  <div class="card hero hero--supp">
-    <div class="hero__num"><b class="dot">${ss.done}</b><span>/ ${ss.target} ${plural(ss.target, 'dávka', 'dávky', 'dávek')}</span></div>
+  <div class="head">
+    <div class="head__num"><b class="dot">${ss.done}</b><span class="num">/ ${ss.target} ${plural(ss.target, 'dávka', 'dávky', 'dávek')}</span></div>
     <div class="bar bar--lg"><i style="width:${ss.target ? (ss.done / ss.target) * 100 : 0}%"></i></div>
   </div>
-  <div class="supps">${config.customSuplementsList.map((s) => {
+  <div class="group">${config.customSuplementsList.map((s) => {
     const list = doses(d, s.id);
-    return `<div class="card supp${list.length >= s.frequency ? ' done' : ''}">
-      <div class="supp__top"><b>${esc(s.name)}</b><button type="button" class="ibtn sm ghost" data-act="editSupp" data-id="${esc(s.id)}" aria-label="Upravit">${ic('pencil')}</button></div>
+    return `<div class="supp${list.length >= s.frequency ? ' done' : ''}">
+      <div class="supp__top"><b>${esc(s.name)}${list.length >= s.frequency ? ic('check', 'ok') : ''}</b><button type="button" class="ibtn ghost" data-act="editSupp" data-id="${esc(s.id)}" aria-label="Upravit ${esc(s.name)}">${ic('pencil')}</button></div>
       <div class="supp__doses">${s.customTimes.map((t, i) => {
         const on = i < list.length, late = !on && k === TODAY && toMins(t) !== null && toMins(t) + 30 < nm && i === list.length;
         return `<button type="button" class="dose${on ? ' on' : ''}${late ? ' late' : ''}" data-act="dose" data-id="${esc(s.id)}" data-i="${i}">
-          <span>${on ? ic('check') : i + 1}</span><small>${on ? hm(list[i]) : esc(t)}</small></button>`;
+          <span>${on ? ic('check') : i + 1}</span><small class="num">${on ? hm(list[i]) : esc(t)}</small></button>`;
       }).join('')}</div>
     </div>`;
   }).join('') || '<p class="empty">Žádné suplementy. Přidej první.</p>'}</div>
@@ -594,17 +599,17 @@ function renderFood() {
     </div>
     <div class="emojis" ${F.emojiOpen ? '' : 'hidden'}>${EMOJIS.map((e) => `<button type="button" data-act="foodEmojiSet" data-e="${e}">${e}</button>`).join('')}</div>
     <input id="fDetail" class="in" type="text" maxlength="80" placeholder="Co jsi měl? (BigMac, kuřecí bageta…)" value="${esc(F.detail)}" autocomplete="off">
-    <div class="rate"><span class="lbl">Chutnost</span><div class="stars">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="foodStars" data-n="${n}" class="${n <= F.stars ? 'on' : ''}" aria-label="${n} z 5">★</button>`).join('')}</div></div>
+    <div class="rate"><span>Chuť</span><div class="stars">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="foodStars" data-n="${n}" class="${n <= F.stars ? 'on' : ''}" aria-label="${n} z 5">${ic('star')}</button>`).join('')}</div></div>
     <button type="button" class="btn btn--food" data-act="foodSave">${F.edit ? 'Uložit změny' : 'Uložit jídlo'}</button>
   </div>
 
-  <h3 class="sec">${ui.active === TODAY ? 'Dnes' : dayLabel(ui.active, { weekday: 'short', day: 'numeric', month: 'numeric' })} <span>${fs.length}</span></h3>
-  <div class="list">${fs.length ? fs.map((f) => { const s = foodSplit(f); return `
-    <div class="row row--food${F.edit === f.id ? ' sel' : ''}">
+  <h3 class="sec">${ui.active === TODAY ? 'Dnes' : dayLabel(ui.active, { weekday: 'short', day: 'numeric', month: 'numeric' })} <span class="num">${fs.length}</span></h3>
+  <div class="group">${fs.length ? fs.map((f) => { const s = foodSplit(f); return `
+    <div class="row${F.edit === f.id ? ' sel' : ''}">
       <span class="row__e">${esc(f.emoji || '🍽️')}</span>
-      <button type="button" class="row__t" data-act="foodEdit" data-id="${f.id}"><small class="cat">${esc(f.category)} · ${esc(f.time || hm(f.id))}</small><b>${esc(s.detail || s.place)}</b>${s.detail && s.place ? `<small>${esc(s.place)}</small>` : ''}</button>
-      <span class="row__stars">${'★'.repeat(+f.stars || 0)}<i>${'★'.repeat(5 - (+f.stars || 0))}</i></span>
-      <button type="button" class="ibtn sm ghost" data-act="rmFood" data-id="${f.id}" aria-label="Smazat">${ic('x')}</button>
+      <button type="button" class="row__t" data-act="foodEdit" data-id="${f.id}" aria-label="Upravit"><small class="cat">${esc(f.category)} · <span class="num">${esc(f.time || hm(f.id))}</span></small><b>${esc(s.detail || s.place)}</b>${s.detail && s.place ? `<small>${esc(s.place)}</small>` : ''}</button>
+      ${starsRow(+f.stars || 0)}
+      <button type="button" class="ibtn ghost" data-act="rmFood" data-id="${f.id}" aria-label="Smazat">${ic('x')}</button>
     </div>`; }).join('') : '<p class="empty">Zatím žádné jídlo.</p>'}</div>
   <button type="button" class="btn btn--ghost" data-act="history">${ic('clock')} Historie a podniky</button>`;
   $('#fPlace').addEventListener('input', (e) => { F.place = e.target.value; });
@@ -627,7 +632,7 @@ function saveFood() {
     d.food.push({ id, time: hm(Date.now()), ...fields });
     ui.food = { ...newFoodDraft(), cat: F.cat };
     commit();
-    toast(`${F.emoji} Uloženo`, `${fields.name} · ${'★'.repeat(F.stars)}`, 'ok', () => removeFood(k, id, true));
+    toast(`${F.emoji} Uloženo`, `${fields.name} · ${F.stars}/5`, 'ok', () => removeFood(k, id, true));
   }
 }
 function removeFood(k, id, quiet) {
@@ -655,18 +660,18 @@ function openHistory() {
       list.sort(ui.histSort === 'date' ? (a, b) => (b.date + b.id > a.date + a.id ? 1 : -1) : (a, b) => (b.stars - a.stars) || (b.date > a.date ? 1 : -1));
       body += `<div class="sortrow"><span>${list.length} ${plural(list.length, 'jídlo', 'jídla', 'jídel')}</span><div class="seg seg--sm">${[['date', 'Nejnovější'], ['stars', 'Nejlepší']].map(([k, l]) => `<button type="button" data-s="${k}" class="${ui.histSort === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>`;
       let lastDate = '';
-      body += list.length ? list.slice(0, 300).map((f) => {
-        const head = ui.histSort === 'date' && f.date !== lastDate ? `<p class="dhead">${dayLabel(f.date, { weekday: 'short', day: 'numeric', month: 'long', year: f.date.slice(0, 4) === TODAY.slice(0, 4) ? undefined : 'numeric' })}</p>` : '';
+      body += list.length ? '<div class="group">' + list.slice(0, 300).map((f) => {
+        const head = ui.histSort === 'date' && f.date !== lastDate ? `<p class="dhead">${dayLabel(f.date, { weekday: 'long', day: 'numeric', month: 'long', year: f.date.slice(0, 4) === TODAY.slice(0, 4) ? undefined : 'numeric' })}</p>` : '';
         lastDate = f.date;
-        return `${head}<button type="button" class="row row--food" data-go="${f.date}"><span class="row__e">${esc(f.emoji || '🍽️')}</span>
+        return `${head}<button type="button" class="row" data-go="${f.date}"><span class="row__e">${esc(f.emoji || '🍽️')}</span>
           <span class="row__t"><small class="cat">${esc(f.category)}${ui.histSort !== 'date' ? ' · ' + dayLabel(f.date, { day: 'numeric', month: 'numeric', year: '2-digit' }) : ''}</small><b>${esc(f.detail || f.place)}</b>${f.detail && f.place ? `<small>${esc(f.place)}</small>` : ''}</span>
-          <span class="row__stars">${'★'.repeat(+f.stars || 0)}<i>${'★'.repeat(5 - (+f.stars || 0))}</i></span></button>`;
-      }).join('') : '<p class="empty">Nic nenalezeno.</p>';
+          ${starsRow(+f.stars || 0)}</button>`;
+      }).join('') + '</div>' : '<p class="empty">Nic nenalezeno.</p>';
     } else {
       const list = placeStats().filter((p) => !q || p.place.toLowerCase().includes(q)).sort((a, b) => b.avg - a.avg || b.n - a.n);
-      body += list.length ? list.map((p, i) => `<div class="row place"><span class="rank">${i + 1}</span><span class="row__e">${esc(p.emoji || '🍽️')}</span>
+      body += list.length ? '<div class="group">' + list.map((p, i) => `<div class="row place"><span class="rank num">${i + 1}</span><span class="row__e">${esc(p.emoji || '🍽️')}</span>
         <span class="row__t"><b>${esc(p.place)}</b><small>${p.n}× · naposledy ${dayLabel(p.last, { day: 'numeric', month: 'numeric', year: '2-digit' })}</small></span>
-        <span class="avg"><b>${p.avg.toFixed(1).replace('.', ',')}</b>★</span></div>`).join('') : '<p class="empty">Zatím žádné podniky.</p>';
+        <span class="avg"><b class="num">${p.avg.toFixed(1).replace('.', ',')}</b>${ic('star', 'on')}</span></div>`).join('') + '</div>' : '<p class="empty">Zatím žádné podniky.</p>';
     }
     $('#sheetBody').innerHTML = body;
     const inp = $('#hQ');
@@ -716,38 +721,37 @@ function renderStats() {
     return { s, p: tgt ? done / tgt : 0 };
   });
   const v = $('#view-stats');
+  const out = meals.filter((f) => !/^dom/i.test(foodSplit(f).place)).length;
   v.innerHTML = `
   <div class="statbar">
     <div class="seg">${[['week', 'Týden'], ['month', 'Měsíc']].map(([k, l]) => `<button type="button" data-act="period" data-p="${k}" class="${config.statsPeriod === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-    <div class="week__nav"><button type="button" class="ibtn sm" data-act="statNav" data-d="-1" aria-label="Předchozí">${ic('chevL')}</button><span>${label}</span><button type="button" class="ibtn sm" data-act="statNav" data-d="1" aria-label="Další" ${ui.statsOffset >= 0 ? 'disabled' : ''}>${ic('chevR')}</button></div>
+    <div class="week__nav"><button type="button" class="ibtn ghost" data-act="statNav" data-d="-1" aria-label="Předchozí">${ic('chevL')}</button><span>${label}</span><button type="button" class="ibtn ghost" data-act="statNav" data-d="1" aria-label="Další" ${ui.statsOffset >= 0 ? 'disabled' : ''}>${ic('chevR')}</button></div>
   </div>
-  <div class="card chart" id="chartCard">
-    <div class="chart__head"><span class="lbl">${ic('drop')} Pití po dnech</span><small>cíl ${fmtMl(g)}</small></div>
+  <div class="chart" id="chartCard">
+    <div class="chart__head"><b class="dot">${fmtMl(avg)}</b><span>průměrně za den · cíl ${fmtMl(g)}</span></div>
     <div class="chart__plot"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}<line x1="0" x2="${W}" y1="${gy}" y2="${gy}" class="goal"/></svg></div>
     <div class="chart__labels">${labels}</div>
   </div>
-  <div class="stats">
-    <div class="card stat"><small>Průměr za den</small><b class="dot">${fmtMl(avg)}</b><i>${counted.length ? Math.round((avg / g) * 100) : 0} % cíle</i></div>
-    <div class="card stat"><small>Splněno dní</small><b class="dot">${hit}/${counted.length}</b><i>z dní v období</i></div>
-    <div class="card stat"><small>Série</small><b class="dot">${cur}</b><i>nejdelší ${best} ${plural(best, 'den', 'dny', 'dní')}</i></div>
-    <div class="card stat stat--supp"><small>Suplementy</small><b class="dot">${st ? Math.round((sd / st) * 100) : 0} %</b><i>${sd} z ${st} dávek</i></div>
-    <div class="card stat stat--food"><small>Jídel</small><b class="dot">${meals.length}</b><i>${meals.length ? `Ø ${avgStars.toFixed(1).replace('.', ',')} ★` : 'nic zapsáno'}</i></div>
-    <div class="card stat stat--food"><small>Mimo domov</small><b class="dot">${meals.filter((f) => !/^dom/i.test(foodSplit(f).place)).length}</b><i>jídel venku</i></div>
+  <div class="group">
+    <div class="row"><span class="gi">${ic('drop')}</span><span class="row__t"><b>Splněný cíl</b><small>dny v období</small></span><b class="row__v num">${hit} z ${counted.length}</b></div>
+    <div class="row"><span class="gi">${ic('flame')}</span><span class="row__t"><b>Série</b><small>nejdelší ${best} ${plural(best, 'den', 'dny', 'dní')}</small></span><b class="row__v num">${cur} ${plural(cur, 'den', 'dny', 'dní')}</b></div>
+    <div class="row"><span class="gi gi--food">${ic('food')}</span><span class="row__t"><b>Jídla</b><small>${out} mimo domov</small></span><b class="row__v num">${meals.length}${meals.length ? ` · ${avgStars.toFixed(1).replace('.', ',')}` : ''}</b>${meals.length ? ic('star', 'on') : ''}</div>
   </div>
-  ${perSupp.length ? `<div class="card adh"><span class="lbl">${ic('pill')} Jak držíš suplementy</span>${perSupp.map(({ s, p }) => `<div class="adh__row"><span>${esc(s.name)}</span><div class="bar"><i style="width:${p * 100}%"></i></div><b>${Math.round(p * 100)} %</b></div>`).join('')}</div>` : ''}
+  ${perSupp.length ? `<h3 class="sec">Suplementy <span class="num">${st ? Math.round((sd / st) * 100) : 0} % dávek</span></h3>
+  <div class="group">${perSupp.map(({ s, p }) => `<div class="row adh"><span class="row__t"><b>${esc(s.name)}</b></span><div class="bar"><i style="width:${p * 100}%"></i></div><b class="row__v num">${Math.round(p * 100)} %</b></div>`).join('')}</div>` : ''}
   <button type="button" class="btn btn--ghost" data-act="allDays">${ic('list')} Všechny dny</button>`;
   swipe($('#chartCard'), (dir) => { const no = ui.statsOffset + dir; if (no <= 0) { ui.statsOffset = no; haptic(); render(); } });
 }
 function openAllDays() {
   const days = Object.keys(state).filter(isDay).filter((k) => { const d = state[k]; return waterLogs(d).length || foods(d).length || Object.keys(d.vitamins || {}).some((id) => doses(d, id).length); }).sort().reverse();
   openSheet('Všechny dny', () => {
-    $('#sheetBody').innerHTML = days.length ? days.map((k) => {
+    $('#sheetBody').innerHTML = days.length ? '<div class="group">' + days.map((k) => {
       const d = getDay(k), w = dayWater(d), ss = suppStats(d), f = foods(d).length;
       return `<button type="button" class="row dayrow" data-go="${k}"><span class="row__t"><b>${dayLabel(k, { weekday: 'short', day: 'numeric', month: 'numeric', year: '2-digit' })}</b></span>
         <span class="dstat ${w >= goal() ? 'w' : ''}">${ic('drop')}${Math.round((w / goal()) * 100)}%</span>
         <span class="dstat ${ss.target && ss.done >= ss.target ? 'p' : ''}">${ic('pill')}${ss.done}</span>
         <span class="dstat ${f ? 'f' : ''}">${ic('food')}${f}</span></button>`;
-    }).join('') : '<p class="empty">Zatím žádná data.</p>';
+    }).join('') + '</div>' : '<p class="empty">Zatím žádná data.</p>';
     $$('[data-go]').forEach((b) => b.addEventListener('click', () => { closeSheet(); setActive(b.dataset.go); setTab('home'); }));
   });
 }
@@ -788,7 +792,7 @@ function openSettings() {
       <div class="inrow"><button type="button" class="btn btn--ghost sm" id="exp">${ic('download')} Export</button><button type="button" class="btn btn--ghost sm" id="imp">${ic('upload')} Import</button></div>
       <button type="button" class="btn btn--ghost sm" id="recover">${ic('life')} Najít data ze starých verzí</button>
       <div class="set__row"><span>Vibrace při ťuknutí<small>funguje na Androidu</small></span><button type="button" class="switch${config.haptics ? ' on' : ''}" id="hToggle" aria-label="Vibrace"><i></i></button></div>
-      <button type="button" class="btn btn--danger sm" id="wipe">${ic('alert')} Smazat všechna data v tomhle zařízení</button>
+      <button type="button" class="btn btn--danger sm" id="wipe">${ic('alert')} Smazat data v zařízení</button>
     </div>
     <img class="foot__logo" src="icons/logo.png" alt="Trackerrr">
     <p class="foot">verze ${VERSION} · jendovyapky</p>`;
@@ -1081,6 +1085,7 @@ persist();
 $$('#dock button').forEach((b) => { b.innerHTML = ic({ home: 'home', water: 'drop', supps: 'pill', food: 'food', stats: 'chart' }[b.dataset.tab]); });
 $('[data-act="settings"]').innerHTML = ic('sliders');
 $('.sheet__head .ibtn').innerHTML = ic('x');
+document.body.dataset.tab = ui.tab;
 render();
 // úvod: krátký, ťuknutím přeskočit
 (() => {
