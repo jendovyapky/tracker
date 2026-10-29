@@ -1,7 +1,7 @@
 'use strict';
 /* Trackerrr – pití, suplementy a jídlo. Bez frameworku, bez buildu (stejně jako ostatní jendovyapky). */
 
-const VERSION = '2.3';
+const VERSION = '2.4';
 // Klíče v localStorage zůstávají ze staré verze → data v telefonu se neztratí a stará verze by s nimi pořád uměla pracovat.
 const KS = 'trackerrr_state_v10', KC = 'trackerrr_config_v10';
 
@@ -182,7 +182,8 @@ function toast(title, msg = '', type = 'info', undo = null) {
 /* ===== hlavička ===== */
 const TITLES = { home: 'Přehled', water: 'Pití', supps: 'Suplementy', food: 'Jídlo', stats: 'Statistiky' };
 function renderTop() {
-  $('#title').textContent = TITLES[ui.tab].toUpperCase();
+  const h = $('#title'), title = TITLES[ui.tab].toUpperCase();
+  if (h.textContent !== title) { h.textContent = title; if (!reduced()) { h.classList.remove('swap'); void h.offsetWidth; h.classList.add('swap'); } }
   const a = ui.active;
   $('#subtitle').textContent = a === TODAY ? 'dnes · ' + dayLabel(a, { weekday: 'long', day: 'numeric', month: 'numeric' })
     : a === addDays(TODAY, -1) ? 'včera · ' + dayLabel(a, { day: 'numeric', month: 'numeric' }) : dayLabel(a);
@@ -201,6 +202,7 @@ function renderBattery() {
   b.dataset.phase = h >= 7 && h < 14 ? 'morning' : h >= 14 && h < 21 ? 'day' : 'night';
   $('#batteryFill').style.width = pct + '%';
   $('#batteryText').textContent = Math.round(pct) + '%';
+  b.style.setProperty('--w', pct + '%');
 }
 function renderSyncBtn() {
   const b = $('#syncBtn');
@@ -210,17 +212,73 @@ function renderSyncBtn() {
 }
 
 /* ===== přepínání obrazovek ===== */
+// Přechod mezi záložkami podle směru v doku: stará obrazovka odjede, nová přijede z druhé strany a obsah naskočí postupně.
+const ORDER = ['home', 'water', 'supps', 'food', 'stats'];
+let leaving = null;
+function finishLeave() {
+  if (!leaving) return;
+  clearTimeout(leaving.t);
+  leaving.el.hidden = true; leaving.el.classList.remove('leave'); leaving.el.style.top = '';
+  leaving = null;
+}
 function setTab(t) {
   if (t === ui.tab) { scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  finishLeave();
+  const from = $('#view-' + ui.tab), v = $('#view-' + t);
+  const dir = ORDER.indexOf(t) > ORDER.indexOf(ui.tab) ? 1 : -1;
   ui.tab = t;
   document.body.dataset.tab = t; // barevný nádech pozadí podle záložky
-  $$('.view').forEach((v) => { v.hidden = v.id !== 'view-' + t; });
-  const v = $('#view-' + t);
-  v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
-  clearTimeout(setTab.t); setTab.t = setTimeout(() => v.classList.remove('enter'), 750); // jinak by se animace spouštěla při každém překreslení
   if (t === 'home') ui.shownPct = null; // znovu dopočítat procenta
+  const y = scrollY;
   scrollTo({ top: 0 });
+  if (reduced()) from.hidden = true;
+  else {
+    from.style.top = (from.offsetTop - y) + 'px'; // zůstane tam, kde byl vidět
+    from.style.setProperty('--dir', dir);
+    from.classList.add('leave');
+    leaving = { el: from, t: setTimeout(finishLeave, 260) };
+  }
+  v.hidden = false;
+  v.style.setProperty('--dir', dir);
+  v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter');
+  clearTimeout(setTab.t); setTab.t = setTimeout(() => v.classList.remove('enter'), 900); // jinak by se animace spouštěla při každém překreslení
   render();
+  moveLamp();
+}
+// lampička v doku jezdí za aktivní záložkou
+function moveLamp(instant) {
+  const b = $(`#dock button[data-tab="${ui.tab}"]`), lamp = $('#lamp');
+  if (!b || !lamp) return;
+  lamp.classList.toggle('instant', !!instant);
+  lamp.style.transform = `translateX(${b.offsetLeft + b.offsetWidth / 2}px)`;
+}
+addEventListener('resize', () => moveLamp(true));
+// odlétající „+900 ml“ od tlačítka
+function floatText(from, text, cls = '') {
+  if (!from || reduced()) return;
+  const r = from.getBoundingClientRect(), s = document.createElement('span');
+  s.className = 'floaty ' + cls; s.textContent = text;
+  s.style.left = r.left + r.width / 2 + 'px'; s.style.top = r.top + 'px';
+  document.body.appendChild(s);
+  setTimeout(() => s.remove(), 900);
+}
+// číslo naběhne od nuly (velká čísla nahoře v záložce)
+function countUp(el, to, suffix = '') {
+  if (!el || reduced() || !to) return;
+  const t0 = performance.now(), dur = 700;
+  const step = (t) => {
+    const p = clamp((t - t0) / dur, 0, 1);
+    el.textContent = Math.round(to * (1 - Math.pow(1 - p, 4))) + suffix;
+    if (p < 1 && el.isConnected) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+// řádek nejdřív odjede, pak se smaže
+function rowOut(btn, fn) {
+  const row = btn.closest('.row');
+  if (!row || reduced()) { fn(); return; }
+  row.classList.add('out');
+  setTimeout(fn, 200);
 }
 function setActive(k) {
   ui.active = k > TODAY ? TODAY : k;
@@ -233,6 +291,10 @@ function setActive(k) {
 function render() {
   renderTop();
   ({ home: renderHome, water: renderWater, supps: renderSupps, food: renderFood, stats: renderStats })[ui.tab]();
+  const v = $('#view-' + ui.tab);
+  [...v.children].forEach((c, i) => c.style.setProperty('--n', i)); // pořadí pro postupné naskočení
+  if (v.classList.contains('enter')) countUp($('.head__num b', v), parseInt($('.head__num b', v)?.textContent) || 0);
+  ui.pop = null; ui.newId = null; ui.popStar = 0;
 }
 
 /* ===== PŘEHLED ===== */
@@ -303,12 +365,12 @@ function renderHome() {
       <span>${weekLabel()}</span>
       <button type="button" class="ibtn ghost" data-act="week" data-d="1" aria-label="Další týden" ${ui.weekStart >= mondayOf(TODAY) ? 'disabled' : ''}>${ic('chevR')}</button></div>
     </div>
-    <div class="week__row">${weekRow()}</div>
+    <div class="week__row${ui.weekDir ? ` slide${ui.weekDir > 0 ? 'R' : 'L'}` : ''}">${weekRow()}</div>
   </div>
 
   <div class="orbwrap">
     <button type="button" class="orb" data-act="tab" data-tab="water" aria-label="Pití: ${pct} %">
-      <span class="orb__liquid" id="orbLiquid"><i></i><i></i></span>
+      <canvas class="orb__water" id="water" aria-hidden="true"></canvas>
       <canvas class="orb__eyes" id="eyes" width="96" height="48"></canvas>
       <b class="orb__pct" id="orbPct">0%</b>
     </button>
@@ -339,7 +401,7 @@ function renderHome() {
 function setOrb(pct) {
   const el = $('#orbPct'); if (!el) return;
   const level = clamp(pct, 0, 100);
-  $('#orbLiquid').style.setProperty('--lvl', level);
+  W.target = level / 100;
   const from = ui.shownPct ?? 0;
   ui.shownPct = pct;
   eyesMood(pct);
@@ -358,7 +420,67 @@ function moveWeek(dir) {
   if (ns > mondayOf(TODAY)) return;
   haptic();
   ui.weekStart = ns;
+  ui.weekDir = dir;
   render();
+  ui.weekDir = 0;
+}
+
+/* ===== voda v kapce: hladina z pružin (po napití se rozvlní a dohoupe), výška vody na pružině, bublinky ===== */
+const W = { level: 0, target: 0, vel: 0, t: 0, cols: Array.from({ length: 34 }, () => ({ h: 0, v: 0 })), bubbles: [] };
+function splashWater() {
+  if (reduced()) return;
+  const n = W.cols.length, c = Math.floor(n * (0.3 + Math.random() * 0.4));
+  for (let i = -4; i <= 4; i++) { const col = W.cols[c + i]; if (col) col.v += 70 * (1 - Math.abs(i) / 5); } // dopad doprostřed
+  for (let i = 0; i < 14; i++) W.bubbles.push({ x: 0.3 + Math.random() * 0.4, y: 1.02 + Math.random() * 0.25, r: 1.5 + Math.random() * 3, s: 0.25 + Math.random() * 0.35, ph: Math.random() * 6 });
+}
+function waterFrame(dt) {
+  const cv = $('#water'); if (!cv || !dt) return;
+  const S = cv.clientWidth, dpr = Math.min(2, devicePixelRatio || 1);
+  if (!S) return;
+  if (cv.width !== Math.round(S * dpr)) { cv.width = cv.height = Math.round(S * dpr); }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, S, S);
+  W.t += dt;
+  // výška hladiny – pružina (tuhost 40, tlumení 9 → lehce přejede a usadí se)
+  const acc = (W.target - W.level) * 40 - W.vel * 9; W.vel += acc * dt; W.level += W.vel * dt;
+  if (reduced()) { W.level = W.target; W.vel = 0; }
+  // vlny – každý sloupec je pružina, vlna se šíří do sousedů
+  const C = W.cols, n = C.length;
+  for (const c of C) { c.v += (-c.h * 90 - c.v * 3.2) * dt; c.h += c.v * dt; }
+  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < n; i++) {
+    if (i > 0) { const d = (C[i].h - C[i - 1].h) * 0.18; C[i - 1].v += d; }
+    if (i < n - 1) { const d = (C[i].h - C[i + 1].h) * 0.18; C[i + 1].v += d; }
+  }
+  const lvl = clamp(W.level, 0, 1.05);
+  if (lvl <= 0.003 && !W.bubbles.length) { W.surfAt = () => S + 99; const pct = $('#orbPct'); if (pct) pct.style.setProperty('--cut', '999px'); return; }
+  const top = S * (1 - lvl * 1.02), tilt = Math.sin(W.t * 0.7) * 2;
+  const surf = (x, k, ph) => { const i = clamp(Math.round((x / S) * (n - 1)), 0, n - 1);
+    return top + C[i].h * k + Math.sin(x * 0.045 + W.t * 1.9 + ph) * 2.2 + Math.sin(x * 0.018 - W.t * 1.1 + ph) * 1.6 + (x / S - 0.5) * tilt; };
+  const shape = (k, ph) => { g.beginPath(); g.moveTo(0, S); for (let x = 0; x <= S; x += 4) g.lineTo(x, surf(x, k, ph)); g.lineTo(S, S); g.closePath(); };
+  // zadní vlna (světlejší), přední voda s hloubkou
+  shape(0.6, 2.4); g.fillStyle = 'rgba(26,111,191,.32)'; g.fill();
+  shape(1, 0);
+  const grd = g.createLinearGradient(0, top - 6, 0, S);
+  grd.addColorStop(0, '#4C97DD'); grd.addColorStop(0.35, '#1A6FBF'); grd.addColorStop(1, '#0D3F75');
+  g.fillStyle = grd; g.fill();
+  // světlo pod hladinou (kaustika)
+  g.save(); g.clip();
+  const cx = S * (0.35 + Math.sin(W.t * 0.5) * 0.08), rg = g.createRadialGradient(cx, top + 18, 4, cx, top + 18, S * 0.45);
+  rg.addColorStop(0, 'rgba(255,255,255,.22)'); rg.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = rg; g.fillRect(0, 0, S, S);
+  // bublinky
+  if (lvl > 0.06 && Math.random() < dt * 1.4) W.bubbles.push({ x: 0.2 + Math.random() * 0.6, y: 1.02, r: 1 + Math.random() * 2, s: 0.12 + Math.random() * 0.15, ph: Math.random() * 6 });
+  g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1;
+  W.bubbles = W.bubbles.filter((b) => {
+    b.y -= b.s * dt; const bx = (b.x + Math.sin(W.t * 3 + b.ph) * 0.012) * S, by = b.y * S;
+    if (by < surf(bx, 1, 0) + b.r) return false;
+    g.beginPath(); g.arc(bx, by, b.r, 0, 7); g.stroke(); return true;
+  });
+  g.restore();
+  // lesklá linka hladiny
+  g.beginPath(); for (let x = 0; x <= S; x += 4) { const y = surf(x, 1, 0); x ? g.lineTo(x, y) : g.moveTo(x, y); }
+  g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1.6; g.stroke();
+  W.surfAt = (x) => surf(x, 1, 0);
+  // text procent se přebarví přesně na hladině (nad vodou tmavý, pod ní bílý)
+  const pct = $('#orbPct'); if (pct) pct.style.setProperty('--cut', (surf(S / 2, 1, 0) - pct.offsetTop) + 'px');
 }
 
 /* ===== tečkové oči v kapce (maskot rodiny jendovyapky) ===== */
@@ -370,7 +492,7 @@ function eyesMood(pct) {
   TGT.wide = pct >= 50 && pct < 100 ? 0.4 : 0;
 }
 function eyesJoy() { hop = 1; joyUntil = performance.now() + 1400; TGT.happy = 1; setTimeout(() => eyesMood(ui.shownPct ?? 0), 1450); }
-function drawEye(g, cx, cy, w, h, happy) {
+function drawEye(g, cx, cy, w, h, happy, under) {
   const P = 4.2, R = 1.45;
   for (let y = -12.6; y <= 12.6; y += P) for (let x = -10.5; x <= 10.5; x += P) {
     const ax = Math.abs(x), ay = Math.abs(y);
@@ -378,10 +500,14 @@ function drawEye(g, cx, cy, w, h, happy) {
     const r = Math.min(w, h) * 0.38, dx = Math.max(0, ax - (w / 2 - r)), dy = Math.max(0, ay - (h / 2 - r));
     if (Math.hypot(dx, dy) > r) continue;
     if (happy > 0.3 && y > -h * 0.05) continue; // ∩
+    g.fillStyle = under && under(cx + x, cy + y) ? '#F5F0E8' : '#10233D'; // tečky pod hladinou světlé
     g.beginPath(); g.arc(cx + x, cy + y, R, 0, 7); g.fill();
   }
 }
+let lastT = 0;
 function eyesFrame(t) {
+  const dt = Math.min(0.033, (t - (lastT || t)) / 1000); lastT = t;
+  if (!document.hidden) waterFrame(dt);
   const cv = $('#eyes');
   if (cv && !document.hidden) {
     const g = cv.getContext('2d'), dpr = Math.min(2, devicePixelRatio || 1);
@@ -393,11 +519,11 @@ function eyesFrame(t) {
     for (const k in TGT) EYE[k] += (TGT[k] - EYE[k]) * 0.14;
     hop = Math.max(0, hop - 0.05);
     g.clearRect(0, 0, 96, 48);
-    g.fillStyle = '#f1fbff';
+    const ox = cv.offsetLeft, oy = cv.offsetTop, under = W.surfAt ? (x, y) => oy + y > W.surfAt(ox + x) : null;
     const by = 24 - Math.sin(hop * Math.PI) * 5;
     const w = 17 + EYE.wide * 3, h = (21 + EYE.wide * 2) * blink * (1 - EYE.sq * 0.55);
-    drawEye(g, 30 + EYE.lx, by + EYE.ly + EYE.sq * 3, w, Math.max(3, h), EYE.happy);
-    drawEye(g, 66 + EYE.lx, by + EYE.ly + EYE.sq * 3, w, Math.max(3, h), EYE.happy);
+    drawEye(g, 30 + EYE.lx, by + EYE.ly + EYE.sq * 3, w, Math.max(3, h), EYE.happy, under);
+    drawEye(g, 66 + EYE.lx, by + EYE.ly + EYE.sq * 3, w, Math.max(3, h), EYE.happy, under);
   }
   requestAnimationFrame(eyesFrame);
 }
@@ -408,10 +534,13 @@ function logWater(ml, type) {
   ml = parseInt(ml); if (!ml) return;
   const k = ui.active, d = mutDay(k), id = newId();
   d.waterLogs.push({ id, amount: ml, type, time: hm(Date.now()) });
+  ui.newId = id;
   d.water = dayWater(d);
   const before = Math.round(((d.water - ml) / goal()) * 100), after = Math.round((d.water / goal()) * 100);
   commit();
   eyesJoy();
+  splashWater();
+  const orb = $('.orb'); if (orb && !reduced()) { orb.classList.remove('splash'); void orb.offsetWidth; orb.classList.add('splash'); }
   if (before < 100 && after >= 100) toast('Cíl splněn 💧', `${fmtMl(d.water)} – tak se to dělá.`, 'ok', () => removeWater(k, id, true));
   else toast(`+${ml} ml`, `${type} · celkem ${fmtMl(d.water)}`, 'info', () => removeWater(k, id, true));
 }
@@ -453,7 +582,7 @@ function renderWater() {
 
   <h3 class="sec">Vypito <span class="num">${logs.length}×</span></h3>
   <div class="group">${logs.length ? logs.slice().reverse().map((l) => `
-    <div class="row">
+    <div class="row${l.id === ui.newId ? ' new' : ''}">
       <span class="gi">${ic(drinkIcon(l.type))}</span>
       <span class="row__t"><b>${esc(l.type)}</b><small class="num">${esc(l.time || hm(l.id))}</small></span>
       <b class="row__v num">${l.amount} ml</b>
@@ -482,6 +611,7 @@ function toggleDose(id, i) {
     let ts = Date.now();
     if (k !== TODAY) { const m = toMins(s.customTimes[list.length]) ?? 720; const dd = parseDay(k); dd.setHours(Math.floor(m / 60), m % 60, 0, Math.floor(Math.random() * 999)); ts = dd.getTime() + (Date.now() % 60000); }
     d.vitamins[id].push(ts);
+    ui.pop = id + ':' + list.length;
     commit();
     const ss = suppStats(d);
     if (ss.target && ss.done >= ss.target) toast('Všechno vzato 💊', 'Suplementy na dnešek hotové.', 'ok');
@@ -501,7 +631,7 @@ function renderSupps() {
       <div class="supp__top"><b>${esc(s.name)}${list.length >= s.frequency ? ic('check', 'ok') : ''}</b><button type="button" class="ibtn ghost" data-act="editSupp" data-id="${esc(s.id)}" aria-label="Upravit ${esc(s.name)}">${ic('pencil')}</button></div>
       <div class="supp__doses">${s.customTimes.map((t, i) => {
         const on = i < list.length, late = !on && k === TODAY && toMins(t) !== null && toMins(t) + 30 < nm && i === list.length;
-        return `<button type="button" class="dose${on ? ' on' : ''}${late ? ' late' : ''}" data-act="dose" data-id="${esc(s.id)}" data-i="${i}">
+        return `<button type="button" class="dose${on ? ' on' : ''}${late ? ' late' : ''}${ui.pop === s.id + ':' + i ? ' pop' : ''}" data-act="dose" data-id="${esc(s.id)}" data-i="${i}">
           <span>${on ? ic('check') : i + 1}</span><small class="num">${on ? hm(list[i]) : esc(t)}</small></button>`;
       }).join('')}</div>
     </div>`;
@@ -599,13 +729,13 @@ function renderFood() {
     </div>
     <div class="emojis" ${F.emojiOpen ? '' : 'hidden'}>${EMOJIS.map((e) => `<button type="button" data-act="foodEmojiSet" data-e="${e}">${e}</button>`).join('')}</div>
     <input id="fDetail" class="in" type="text" maxlength="80" placeholder="Co jsi měl? (BigMac, kuřecí bageta…)" value="${esc(F.detail)}" autocomplete="off">
-    <div class="rate"><span>Chuť</span><div class="stars">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="foodStars" data-n="${n}" class="${n <= F.stars ? 'on' : ''}" aria-label="${n} z 5">${ic('star')}</button>`).join('')}</div></div>
+    <div class="rate"><span>Chuť</span><div class="stars">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-act="foodStars" data-n="${n}" style="--s:${n}" class="${n <= F.stars ? 'on' : ''}${n <= ui.popStar ? ' pop' : ''}" aria-label="${n} z 5">${ic('star')}</button>`).join('')}</div></div>
     <button type="button" class="btn btn--food" data-act="foodSave">${F.edit ? 'Uložit změny' : 'Uložit jídlo'}</button>
   </div>
 
   <h3 class="sec">${ui.active === TODAY ? 'Dnes' : dayLabel(ui.active, { weekday: 'short', day: 'numeric', month: 'numeric' })} <span class="num">${fs.length}</span></h3>
   <div class="group">${fs.length ? fs.map((f) => { const s = foodSplit(f); return `
-    <div class="row${F.edit === f.id ? ' sel' : ''}">
+    <div class="row${F.edit === f.id ? ' sel' : ''}${f.id === ui.newId ? ' new' : ''}">
       <span class="row__e">${esc(f.emoji || '🍽️')}</span>
       <button type="button" class="row__t" data-act="foodEdit" data-id="${f.id}" aria-label="Upravit"><small class="cat">${esc(f.category)} · <span class="num">${esc(f.time || hm(f.id))}</span></small><b>${esc(s.detail || s.place)}</b>${s.detail && s.place ? `<small>${esc(s.place)}</small>` : ''}</button>
       ${starsRow(+f.stars || 0)}
@@ -630,6 +760,7 @@ function saveFood() {
   } else {
     const id = newId();
     d.food.push({ id, time: hm(Date.now()), ...fields });
+    ui.newId = id;
     ui.food = { ...newFoodDraft(), cat: F.cat };
     commit();
     toast(`${F.emoji} Uloženo`, `${fields.name} · ${F.stars}/5`, 'ok', () => removeFood(k, id, true));
@@ -712,7 +843,7 @@ function renderStats() {
   const gy = H - (g / max) * H;
   const bars = keys.map((k, i) => {
     const h = Math.max(water[i] ? 4 : 0, (water[i] / max) * H), x = i * (bw + gap);
-    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(5, bw / 2).toFixed(1)}" class="${water[i] >= g ? 'hit' : ''}${k === TODAY ? ' today' : ''}"/>
+    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(5, bw / 2).toFixed(1)}" class="${water[i] >= g ? 'hit' : ''}${k === TODAY ? ' today' : ''}" style="--i:${i}"/>
       <rect x="${x.toFixed(1)}" y="0" width="${bw.toFixed(1)}" height="${H}" class="hitbox" data-act="statDay" data-k="${k}"/>`;
   }).join('');
   const labels = keys.map((k, i) => { const dd = parseDay(k).getDate(); return n > 10 ? (dd === 1 || dd % 5 === 0 ? `<span style="left:${((i + 0.5) / n) * 100}%">${dd}</span>` : '') : `<span style="left:${((i + 0.5) / n) * 100}%">${DAY_SHORT[i]}</span>`; }).join('');
@@ -942,22 +1073,22 @@ const ACT = {
   week: (b) => moveWeek(+b.dataset.d),
   streak: () => { const { cur, best } = streakInfo(); toast(`Série ${cur} ${plural(cur, 'den', 'dny', 'dní')} 🔥`, `Dny po sobě se splněným pitím. Nejdelší: ${best}.`); },
   battery: () => { const m = nowMins(), left = m >= 420 ? 1440 + 420 - m : 420 - m; toast('Zbytek dne', `Do 7:00 zbývá ${Math.floor(left / 60)} h ${left % 60} min.`); },
-  drink: (b) => { const dr = config.drinks.find((x) => x.id === b.dataset.id); if (dr) logWater(dr.ml, dr.name); },
+  drink: (b) => { const dr = config.drinks.find((x) => x.id === b.dataset.id); if (dr) { floatText(b, `+${dr.ml} ml`, 'water'); logWater(dr.ml, dr.name); } },
   customToggle: () => { haptic(); ui.customOpen = !ui.customOpen; render(); },
   customSet: (b) => { ui.customMl = +b.dataset.ml; haptic(); render(); },
-  customAdd: () => { logWater(ui.customMl, 'Vlastní objem'); ui.customOpen = false; render(); },
-  rmWater: (b) => removeWater(ui.active, +b.dataset.id),
+  customAdd: (b) => { floatText(b, `+${ui.customMl} ml`, 'water'); logWater(ui.customMl, 'Vlastní objem'); ui.customOpen = false; render(); },
+  rmWater: (b) => rowOut(b, () => removeWater(ui.active, +b.dataset.id)),
   dose: (b) => toggleDose(b.dataset.id, +b.dataset.i),
   editSupp: (b) => openSuppEditor(b.dataset.id),
   foodCat: (b) => { ui.food.cat = b.dataset.c; haptic(); render(); },
   foodPlace: (b) => { ui.food.place = b.dataset.p; ui.food.emoji = b.dataset.e; haptic(); render(); $('#fDetail')?.focus(); },
   foodEmoji: () => { ui.food.emojiOpen = !ui.food.emojiOpen; haptic(); render(); },
   foodEmojiSet: (b) => { ui.food.emoji = b.dataset.e; ui.food.emojiOpen = false; haptic(); render(); },
-  foodStars: (b) => { ui.food.stars = +b.dataset.n; haptic(); render(); },
+  foodStars: (b) => { ui.food.stars = +b.dataset.n; ui.popStar = ui.food.stars; haptic(); render(); },
   foodSave: saveFood,
   foodEdit: (b) => startFoodEdit(+b.dataset.id),
   foodCancel: () => { ui.food = newFoodDraft(); render(); },
-  rmFood: (b) => removeFood(ui.active, +b.dataset.id),
+  rmFood: (b) => rowOut(b, () => removeFood(ui.active, +b.dataset.id)),
   history: openHistory,
   period: (b) => { config.statsPeriod = b.dataset.p; ui.statsOffset = 0; haptic(); persist(); render(); },
   statNav: (b) => { ui.statsOffset = Math.min(0, ui.statsOffset + +b.dataset.d); haptic(); render(); },
@@ -1119,6 +1250,7 @@ $('[data-act="settings"]').innerHTML = ic('sliders');
 $('.sheet__head .ibtn').innerHTML = ic('x');
 document.body.dataset.tab = ui.tab;
 render();
+moveLamp(true);
 // úvod: krátký, ťuknutím přeskočit
 (() => {
   const boot = $('#boot');
