@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "trackerrr", "runtimeExecutable": "npx", "runtimeArgs": ["-y", "http-server", ".", "-p", "5191", "-c-1", "--silent"], "port": 5191 }
+  ]
+}

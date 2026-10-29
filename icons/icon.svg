@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs>
+<radialGradient id="bg" cx="50%" cy="12%" r="95%"><stop offset="0" stop-color="#1d3352"/><stop offset=".55" stop-color="#121826"/><stop offset="1" stop-color="#0b0c10"/></radialGradient>
+<linearGradient id="dr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b6ebff"/><stop offset=".55" stop-color="#5ec8ff"/><stop offset="1" stop-color="#2f6bff"/></linearGradient>
+<filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="22"/></filter>
+<filter id="n"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="2" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .09 0"/></filter>
+</defs>
+<rect width="512" height="512" rx="112" fill="url(#bg)"/>
+<path d="M256 76C256 76 132 214 132 316a124 124 0 0 0 248 0C380 214 256 76 256 76z" fill="#5ec8ff" opacity=".45" filter="url(#glow)"/>
+<path d="M256 76C256 76 132 214 132 316a124 124 0 0 0 248 0C380 214 256 76 256 76z" fill="url(#dr)"/>
+<path d="M160 322a96 96 0 0 0 40 62" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="10" stroke-linecap="round"/>
+<g fill="#0b1626"><circle cx="201.5" cy="274.0" r="4.6"/><circle cx="214.5" cy="274.0" r="4.6"/><circle cx="188.5" cy="287.0" r="4.6"/><circle cx="201.5" cy="287.0" r="4.6"/><circle cx="214.5" cy="287.0" r="4.6"/><circle cx="227.5" cy="287.0" r="4.6"/><circle cx="188.5" cy="300.0" r="4.6"/><circle cx="201.5" cy="300.0" r="4.6"/><circle cx="214.5" cy="300.0" r="4.6"/><circle cx="227.5" cy="300.0" r="4.6"/><circle cx="188.5" cy="313.0" r="4.6"/><circle cx="201.5" cy="313.0" r="4.6"/><circle cx="214.5" cy="313.0" r="4.6"/><circle cx="227.5" cy="313.0" r="4.6"/><circle cx="201.5" cy="326.0" r="4.6"/><circle cx="214.5" cy="326.0" r="4.6"/><circle cx="297.5" cy="274.0" r="4.6"/><circle cx="310.5" cy="274.0" r="4.6"/><circle cx="284.5" cy="287.0" r="4.6"/><circle cx="297.5" cy="287.0" r="4.6"/><circle cx="310.5" cy="287.0" r="4.6"/><circle cx="323.5" cy="287.0" r="4.6"/><circle cx="284.5" cy="300.0" r="4.6"/><circle cx="297.5" cy="300.0" r="4.6"/><circle cx="310.5" cy="300.0" r="4.6"/><circle cx="323.5" cy="300.0" r="4.6"/><circle cx="284.5" cy="313.0" r="4.6"/><circle cx="297.5" cy="313.0" r="4.6"/><circle cx="310.5" cy="313.0" r="4.6"/><circle cx="323.5" cy="313.0" r="4.6"/><circle cx="297.5" cy="326.0" r="4.6"/><circle cx="310.5" cy="326.0" r="4.6"/></g>
+<rect width="512" height="512" rx="112" filter="url(#n)"/>
+</svg>
