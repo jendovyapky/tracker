@@ -1,0 +1,8 @@
+{
+  // Trackerrr – statický web na Cloudflare Workers (static assets). Nasazení: npx wrangler deploy
+  // Co se nenahrává, je v .assetsignore (git, poznámky, sync server…).
+  "name": "trackerrr",
+  "compatibility_date": "2026-10-23",
+  "observability": { "enabled": false },
+  "assets": { "directory": "." }
+}

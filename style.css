@@ -429,5 +429,3 @@ button.grow:active, .grow__main:active { opacity: .7; }
 /* soukromý cloud */
 .keybox { display: flex; align-items: center; gap: 4px; padding-left: 14px; border-radius: 14px; background: var(--surface2); }
 .keybox code { flex: 1; min-width: 0; font: 500 15px var(--mono); letter-spacing: .02em; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; }
-.legacy { background: color-mix(in srgb, var(--food) 10%, var(--surface)) !important; }
-.legacy .note b { color: var(--food); }

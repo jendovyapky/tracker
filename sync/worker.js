@@ -4,8 +4,8 @@
 import { DurableObject } from 'cloudflare:workers';
 
 const KEY = /^[a-km-z2-9]{24}$/; // stejná abeceda jako v app.js (bez l, 0, 1)
-const ORIGINS = [/^https:\/\/tracker\.jendovyapky\.eu$/, /^https:\/\/([a-z0-9-]+\.)?tracker-[a-z0-9]+\.pages\.dev$/, /^https:\/\/([a-z0-9-]+\.)?trackerrr\.pages\.dev$/,
-  /^https:\/\/jendovyapky\.github\.io$/, /^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/];
+const ORIGINS = [/^https:\/\/tracker\.jendovyapky\.eu$/, /^https:\/\/trackerrr\.jendovyapky\.workers\.dev$/, /^https:\/\/([a-z0-9-]+\.)?trackerrr(-[a-z0-9]+)?\.pages\.dev$/,
+  /^http:\/\/localhost:\d+$/, /^http:\/\/127\.0\.0\.1:\d+$/];
 const MAX_BODY = 4 * 1024 * 1024;
 const isDay = (k) => /^\d{4}-\d{2}-\d{2}$/.test(k);
 const sum = (arr, f) => arr.reduce((a, x) => a + (+f(x) || 0), 0);

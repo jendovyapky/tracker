@@ -55,7 +55,6 @@ const ICONS = {
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   store: '<path d="M3 9l1.5-5h15L21 9M3 9v11h18V9M3 9h18M9 20v-6h6v6"/>',
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
-  life: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="m4.9 4.9 4.3 4.3M14.8 14.8l4.3 4.3M14.8 9.2l4.3-4.3M4.9 19.1l4.3-4.3"/>',
   cup: '<path d="M17 8h1a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1"/><path d="M6 6h11v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2Z"/><path d="M11 2v4"/>',
   can: '<path d="M7 3h10v18H7z"/><path d="M7 7h10"/><path d="M13.5 10 10.5 14h3l-3 4"/>',
   glass: '<path d="M5 3h14l-1.6 16.2a2 2 0 0 1-2 1.8H8.6a2 2 0 0 1-2-1.8Z"/><path d="M5.6 9h12.8"/>',
@@ -69,13 +68,13 @@ const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidd
 const DRINK_ICONS = ['glass', 'cup', 'bottle', 'can', 'coffee', 'drop'];
 
 /* ===== stav ===== */
-let state = load(KS) || load('trackerrr_state_v9') || { lastUpdated: 0, deletedLogs: [] };
+let state = load(KS) || { lastUpdated: 0, deletedLogs: [] };
 if (!state || typeof state !== 'object') state = { lastUpdated: 0, deletedLogs: [] };
 if (!Array.isArray(state.deletedLogs)) state.deletedLogs = [];
 let DEL = new Set(state.deletedLogs);
 
 const hadConfig = !!load(KC);
-let config = Object.assign({ notifEnabled: false, notifInterval: 120, statsPeriod: 'week', syncRoom: '', customSuplementsList: [], initialized: false }, load(KC) || {});
+let config = Object.assign({ notifEnabled: false, notifInterval: 120, statsPeriod: 'week', customSuplementsList: [], initialized: false }, load(KC) || {});
 if (!config.initialized) {
   config.customSuplementsList = [
     { id: 'multivitamin', name: 'Multivitamin', frequency: 2, customTimes: ['09:00', '15:00'] },
@@ -86,6 +85,7 @@ if (!config.initialized) {
   config.vitamins_v13_migrated = true;
 }
 // nové věci ve v2
+delete config.syncRoom; // starý Google cloud už se nepoužívá
 if (!config.waterGoal) config.waterGoal = 2100;
 if (!Array.isArray(config.drinks)) config.drinks = [
   { id: 'stanley', name: 'Stanley Cup', ml: 900, icon: 'cup' },
@@ -781,10 +781,6 @@ function openSettings() {
     </div>
 
     <h3 class="sec">${ic('cloud')} Soukromý cloud</h3>
-    ${config.syncRoom ? `<div class="card set legacy">
-      <p class="note"><b>Starý Google cloud („${esc(config.syncRoom)}“) není bezpečný.</b> Jeho adresa je ve veřejném kódu a dá se z ní přečíst všechno. Přenes data do soukromého cloudu.</p>
-      <button type="button" class="btn btn--food sm" id="migrate">${ic('upload')} Přenést a smazat ze starého cloudu</button>
-    </div>` : ''}
     <div class="card set">
       ${config.cloudKey ? `
       <p class="note">Zapnuto. Data vidí jen zařízení s tímhle klíčem – nikomu ho neposílej.</p>
@@ -800,7 +796,6 @@ function openSettings() {
     <h3 class="sec">${ic('download')} Data</h3>
     <div class="card set">
       <div class="inrow"><button type="button" class="btn btn--ghost sm" id="exp">${ic('download')} Export</button><button type="button" class="btn btn--ghost sm" id="imp">${ic('upload')} Import</button></div>
-      <button type="button" class="btn btn--ghost sm" id="recover">${ic('life')} Najít data ze starých verzí</button>
       <div class="set__row"><span>Vibrace při ťuknutí<small>funguje na Androidu</small></span><button type="button" class="switch${config.haptics ? ' on' : ''}" id="hToggle" aria-label="Vibrace"><i></i></button></div>
       <button type="button" class="btn btn--danger sm" id="wipe">${ic('alert')} Smazat data v zařízení</button>
     </div>
@@ -821,7 +816,6 @@ function openSettings() {
     $('#nToggle').onclick = toggleNotifs.bind(null, paint);
     $$('[data-ni]').forEach((b) => (b.onclick = () => { config.notifInterval = +b.dataset.ni; haptic(); commit({ sync: false }); paint(); }));
     const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
-    on('migrate', migrateLegacy);
     on('cloudOn', () => connectKey(newKey()));
     on('keyJoin', () => {
       const k = normKey($('#keyIn').value);
@@ -848,7 +842,6 @@ function openSettings() {
     });
     $('#exp').onclick = exportData;
     $('#imp').onclick = () => $('#importFile').click();
-    $('#recover').onclick = recoverOld;
     $('#hToggle').onclick = () => { config.haptics = !config.haptics; haptic(); persist(); paint(); };
     $('#wipe').onclick = wipeAll;
   };
@@ -862,7 +855,7 @@ function toggleNotifs(paint) {
   });
 }
 function exportData() {
-  const { cloudKey, syncRoom, ...cfg } = config; // klíč do zálohy nepatří (soubor se dá omylem někomu poslat)
+  const { cloudKey, ...cfg } = config; // klíč do zálohy nepatří (soubor se dá omylem někomu poslat)
   const blob = new Blob([JSON.stringify({ ...state, _config: cfg }, null, 1)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -894,18 +887,10 @@ $('#importFile').addEventListener('change', (e) => {
   };
   r.readAsText(file);
 });
-function recoverOld() {
-  const keys = ['trackerrr_state_v9', 'trackerrr_state_v8', 'trackerrr_state_v7', 'trackerrr_state_v6', 'trackerrr_state_v5', 'trackerrr_state_v4', 'trackerrr_state_v3', 'trackerrr_state_v2', 'trackerrr_state_v1', 'app_tracker_state'];
-  let found = 0;
-  for (const k of keys) { const old = load(k); if (old && typeof old === 'object') { state = merge(state, old); found++; } }
-  DEL = new Set(state.deletedLogs);
-  if (found) { commit(); toast('Nalezeno', `Spojeno ${found} ${plural(found, 'stará záloha', 'staré zálohy', 'starých záloh')}.`, 'ok'); }
-  else toast('Nic nenalezeno', 'Žádná stará data v tomhle zařízení nejsou.', 'err');
-}
 function wipeAll() {
   if (!confirm('Smazat všechna data v tomhle zařízení? Doporučuju předtím Export.')) return;
   if (!confirm(config.cloudKey ? 'Opravdu? Kopie v cloudu zůstane (smazat ji jde v Soukromý cloud). Appku odpojím, aby se data nevrátila.' : 'Opravdu? Nejde to vrátit.')) return;
-  [KS, KC, 'trackerrr_state_v9'].forEach((k) => localStorage.removeItem(k));
+  [KS, KC].forEach((k) => localStorage.removeItem(k));
   location.reload();
 }
 
@@ -1078,31 +1063,6 @@ async function connectKey(key) {
   else toast('Cloud nejde', 'Klíč je uložený, zkusím to znovu později.', 'err');
 }
 
-// Starý cloud (Google Apps Script): kdokoliv s adresou z veřejného repa mohl číst data všech místností.
-// Jednorázově se přenese do nového cloudu a místnost se tam přepíše prázdnými daty.
-const LEGACY_API = 'https://script.google.com/macros/s/AKfycbzqRrJO7skZKFusk_YjWmwHSaSs2Nf_MO0dBqZBr4_Qpqt26HnZIiWBk4xVdsfLYKmu/exec';
-async function migrateLegacy() {
-  const room = config.syncRoom; if (!room) return;
-  if (!confirm(`Přenést data z místnosti „${room}“ do soukromého cloudu a ve starém Google cloudu je přepsat prázdnými?\n\nNejdřív aktualizuj Trackerrr na všech zařízeních – stará verze by data do Google cloudu zase nahrála.`)) return;
-  toast('Přenáším…', 'Stahuju ze starého cloudu.', 'sync');
-  try {
-    const r = await fetch(LEGACY_API, { cache: 'no-store' });
-    if (!r.ok) throw new Error('legacy');
-    const all = await r.json(), old = all && all[room];
-    if (old && typeof old === 'object') { state = merge(state, old); DEL = new Set(state.deletedLogs); persist(); }
-    if (!config.cloudKey) config.cloudKey = newKey();
-    const saved = await cloud();
-    const need = Object.keys(state).filter(isDay).length, got = Object.keys(saved).filter(isDay).length;
-    if (got < need) throw new Error('verify'); // v novém cloudu musí být všechno, jinak starý nemažeme
-    state = merge(state, saved); DEL = new Set(state.deletedLogs);
-    await fetch(LEGACY_API, { method: 'POST', body: JSON.stringify({ date: room, data: { lastUpdated: Date.now(), deletedLogs: [], moved: true } }) });
-    config.syncRoom = ''; ui.sync = 'ok'; persist(); render();
-    if (sheetPaint) sheetPaint();
-    toast('Hotovo', `Přeneseno ${got} ${plural(got, 'den', 'dny', 'dní')}. Ve starém cloudu je místnost prázdná.`, 'ok');
-  } catch (e) {
-    toast('Přenos se nepovedl', e.message === 'verify' ? 'Nový cloud nemá všechno – starý jsem nechal být.' : 'Zkus to znovu, nic se nesmazalo.', 'err');
-  }
-}
 // odkaz pro další zařízení: …/#klic=xxxx-xxxx-… (část za # se na server neposílá)
 function keyFromLink() {
   const m = /[#&]klic=([a-z0-9-]+)/i.exec(location.hash);
